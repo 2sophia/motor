@@ -1,0 +1,30 @@
+"""sophia-motor — instanceable agent motor wrapping Claude Agent SDK.
+
+Public API:
+    from sophia_motor import Motor, MotorConfig, RunTask, RunResult
+"""
+from ._models import RunMetadata, RunResult, RunTask
+from .config import MotorConfig
+from .events import (
+    Event,
+    EventBus,
+    LogRecord,
+    default_console_event_logger,
+    default_console_logger,
+)
+from .motor import Motor
+
+__version__ = "0.0.1"
+
+__all__ = [
+    "Motor",
+    "MotorConfig",
+    "RunTask",
+    "RunResult",
+    "RunMetadata",
+    "Event",
+    "LogRecord",
+    "EventBus",
+    "default_console_logger",
+    "default_console_event_logger",
+]
