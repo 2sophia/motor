@@ -27,6 +27,7 @@ typically retries with a corrected approach.
 from __future__ import annotations
 
 import logging
+import os.path
 import pathlib
 import re
 from typing import Any, Awaitable, Callable, Literal
@@ -64,6 +65,10 @@ _STRICT_BLOCKED_CMDS = frozenset({
     "kill", "pkill", "killall", "reboot", "shutdown", "halt", "poweroff",
     # mount / partition
     "mount", "umount", "fdisk", "mkfs", "parted",
+    # symlink / hardlink creation — would let the agent plant a symlink
+    # to escape cwd at the next Read; lexical path check below trusts
+    # that no new symlinks appear during a run.
+    "ln", "link", "symlink",
     # crontab / timers
     "crontab", "at", "batch",
     # firewall / network config
@@ -127,7 +132,12 @@ _CMD_WORD_RE = re.compile(r"(?:^|[;|&]|&&|\|\|)\s*([\w./-]+)")
 # ─────────────────────────────────────────────────────────────────────────
 
 def _resolve_under_cwd(path: str, cwd: str) -> str | None:
-    """Resolve `path` against cwd, following symlinks. Returns None on error."""
+    """Resolve `path` against cwd, following symlinks. Returns None on error.
+
+    Used by Write to detect symlink-escape into outputs/ (where we DO
+    want anti-escape semantics, since the agent could otherwise plant a
+    symlink earlier and then write through it).
+    """
     if not cwd:
         return None
     try:
@@ -138,19 +148,31 @@ def _resolve_under_cwd(path: str, cwd: str) -> str | None:
 
 
 def _is_path_in_cwd(path: str, cwd_resolved: str, cwd: str) -> bool:
-    """True if `path` resolves to a location inside `cwd_resolved`.
+    """True if `path` is lexically inside `cwd` (no symlink following).
 
-    Uses real-path resolution so a symlink inside the workspace pointing
-    elsewhere on the filesystem is correctly rejected.
+    Lexical-only check by design: the motor places intentional symlinks
+    under `attachments/` (and the CLI places skill symlinks under
+    `.claude/`) that point at locations outside cwd. Following those at
+    Read/Glob/Grep time would be a self-inflicted denial of service —
+    every Path-based attachment would be blocked from being read.
+
+    Symlink-escape resistance is enforced upstream: agent-driven symlink
+    creation via Bash (`ln`, `link`, `cp -s`, `tar -h`, etc.) is in the
+    strict blocklist. Write is checked separately with full resolution
+    (see `_resolve_under_cwd` use in the Write branch).
+
+    Implementation: build the absolute path WITHOUT following links,
+    normalize `..` and `.` lexically with `os.path.normpath`, then
+    require the result to be exactly `cwd_resolved` or a child of it.
     """
     if not path:
         return True
     if not cwd:
         return not path.startswith("/")
-    resolved = _resolve_under_cwd(path, cwd)
-    if resolved is None:
-        return False
-    return resolved == cwd_resolved or resolved.startswith(cwd_resolved + "/")
+    abs_path = path if path.startswith("/") else os.path.join(cwd, path)
+    normalized = os.path.normpath(abs_path)
+    cwd_prefix = cwd_resolved.rstrip("/")
+    return normalized == cwd_prefix or normalized.startswith(cwd_prefix + "/")
 
 
 # ─────────────────────────────────────────────────────────────────────────

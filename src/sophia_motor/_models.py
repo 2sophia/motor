@@ -15,13 +15,20 @@ from pydantic import BaseModel
 #
 # Accepts a single value or a list. Valid forms (free mix in a list):
 #
-#   1. str | Path  →  real file       → symlink in <run>/attachments/<name>
-#   2. str | Path  →  real directory  → symlink in <run>/attachments/<name>/
+#   1. str | Path  →  real file       → hard-link in <run>/attachments/<name>
+#   2. str | Path  →  real directory  → mirrored real-tree of file-level
+#                                       hard-links in <run>/attachments/<name>/
 #   3. dict[str, str]  →  inline      → file written to <run>/attachments/<relpath>
 #
-# Default: SYMLINK for Path entries (no copy, no storage waste, no
-# duplication). The audit trail goes through the SSE dump in <run>/audit/,
-# not through the filesystem under attachments/. A symlink that mutates
+# Default: HARD-LINK for Path entries (zero-copy, same inode). Required
+# because the SDK Glob tool delegates to `ripgrep --files` without `-L`,
+# which silently skips symlinks — hard links are seen as regular files
+# and remain discoverable. Cross-filesystem (EXDEV) falls back to a
+# symlink: in that case glob discovery may miss the file, so the dev
+# should pass the explicit path in the prompt.
+#
+# The audit trail goes through the SSE dump in <run>/audit/, not through
+# the filesystem under attachments/. A hard link that the source mutates
 # afterwards does not weaken the defense: the dumped tool_result records
 # the TEXT the model read, not the current bytes on disk.
 #
@@ -69,12 +76,21 @@ class RunTask:
     Tool semantics — confirmed against the Claude Agent SDK source:
 
       tools (HARD WHITELIST — what the model can SEE):
-        None       → SDK default preset (claude_code) → all built-ins loaded
+        None       → fall back to MotorConfig.default_tools (default `[]`)
         []         → no tools at all
         ["Read"]   → only Read is available; everything else does not exist
 
-      allowed_tools (PERMISSION SKIP — auto-runs without prompting):
-        Skip the permission prompt; does NOT restrict.
+        The motor's MotorConfig.default_tools is `[]` out of the box —
+        principle of least privilege: a fresh `Motor()` exposes zero
+        tools and the dev opts in. Set MotorConfig.default_tools to
+        `None` (advanced) to hand selection back to the SDK preset
+        (every built-in available).
+
+      allowed_tools (PERMISSION SKIP — rarely needed):
+        The motor runs the SDK with `permission_mode="bypassPermissions"`,
+        which already auto-approves every tool call. `allowed_tools` is
+        therefore redundant for typical use — leave it `None`. Set it
+        only if you switch the underlying permission_mode (advanced).
 
       disallowed_tools (HARD BLOCK — removed from the model's context):
         Use for "never ever" tools (WebFetch, agent spawning, ...).

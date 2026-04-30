@@ -76,6 +76,46 @@ async def test_strict_edit_outside_cwd_blocked(cwd: str) -> None:
     assert out.get("decision") == "block"
 
 
+async def test_strict_read_through_symlink_inside_cwd_allowed(
+    cwd: str, tmp_path: Path,
+) -> None:
+    """Symlinks under attachments/ (created by the motor) must be readable.
+
+    The motor symlinks Path-based attachments into the run sandbox; the
+    target lives outside cwd by design. Lexical-only path check accepts
+    these because the path string stays under cwd.
+    """
+    target_outside = tmp_path.parent / "real-data.md"
+    target_outside.write_text("hello")
+    link = Path(cwd) / "attachments" / "atlas.md"
+    link.symlink_to(target_outside)
+
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {
+            "tool_name": "Read",
+            "tool_input": {"file_path": "attachments/atlas.md"},
+            "cwd": cwd,
+        },
+        None, None,
+    )
+    assert out == {}, "symlink under attachments/ must be allowed"
+
+
+async def test_strict_bash_ln_blocked(cwd: str) -> None:
+    """Agent cannot plant new symlinks via Bash (would defeat lexical check)."""
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "ln -s /etc/passwd attachments/sneak"},
+            "cwd": cwd,
+        },
+        None, None,
+    )
+    assert out.get("decision") == "block"
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # strict mode — Glob / Grep
 # ─────────────────────────────────────────────────────────────────────────

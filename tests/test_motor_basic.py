@@ -68,7 +68,6 @@ async def test_motor_runs_simple_read_task(api_key, tmp_path):
                 "summary of the regulatory content cited. Reply in English."
             ),
             tools=["Read"],
-            allowed_tools=["Read"],
             attachments=[{"sample.txt": SAMPLE_TEXT}],
             max_turns=5,
         ))

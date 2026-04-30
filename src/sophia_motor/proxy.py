@@ -328,21 +328,52 @@ _SYSTEM_REMINDER_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+# Reminders that match this pattern carry information the model needs
+# to function — chiefly the list of available skills. They look like:
+#
+#   <system-reminder>
+#   The following skills are available for use with the Skill tool:
+#   - my-skill: Use when ...
+#   - other-skill: ...
+#   </system-reminder>
+#
+# Stripping them blinds the model to the skill catalogue, so it ignores
+# every skill the dev linked into the run. We preserve any reminder
+# that mentions "skills available", "for use with", or shows a
+# bulleted skill listing — everything else (date changes, "task tools
+# haven't been used" nudges, etc.) gets removed as before.
+_SKILL_LISTING_RE = re.compile(
+    r"skills?\s+(are\s+available|for\s+use|available)"
+    r"|for\s+use\s+with\s+the\s+Skill\s+tool",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 def _strip_user_system_reminders(body: dict) -> int:
     """Remove <system-reminder>...</system-reminder> blocks from USER messages.
 
-    The Claude CLI subprocess injects these from turn 2 onwards (skill
-    listing, currentDate, 'task tools haven't been used recently', etc).
-    For task-driven agent runs they're noise — they consume tokens, distract
-    the model, and aren't relevant to the compliance task.
+    The Claude CLI subprocess injects these from turn 2 onwards
+    (currentDate, 'task tools haven't been used recently', etc). For
+    task-driven agent runs they're noise — they consume tokens,
+    distract the model, and aren't relevant to the task.
 
-    A text block whose content is ENTIRELY system-reminders is dropped from
-    the message. A text block with mixed content (reminder + actual user
-    text) keeps the residual user text and drops only the reminder spans.
+    Exception: reminders that contain the **skill catalogue** are
+    preserved. The CLI uses these reminders as the only channel through
+    which the model learns which skills the run has at its disposal —
+    stripping them silently disables every linked skill.
 
-    Returns the number of reminder blocks (matches) removed across the body.
+    A text block whose content is ENTIRELY noise reminders is dropped.
+    A text block with mixed content keeps the residual user text and
+    any preserved skill-listing reminder.
+
+    Returns the number of reminder blocks actually removed.
     """
+    def _replace(m: "re.Match[str]") -> str:
+        inner = m.group(0)
+        if _SKILL_LISTING_RE.search(inner):
+            return inner  # preserve: model needs the skill catalogue
+        return ""
+
     count = 0
     for msg in body.get("messages", []):
         if msg.get("role") != "user":
@@ -359,17 +390,20 @@ def _strip_user_system_reminders(body: dict) -> int:
             if not isinstance(text, str) or "<system-reminder>" not in text:
                 new_content.append(block)
                 continue
-            n = len(_SYSTEM_REMINDER_RE.findall(text))
-            if n == 0:
+            matches = _SYSTEM_REMINDER_RE.findall(text)
+            if not matches:
                 new_content.append(block)
                 continue
-            stripped = _SYSTEM_REMINDER_RE.sub("", text).strip()
-            count += n
+            stripped = _SYSTEM_REMINDER_RE.sub(_replace, text).strip()
+            # count = total reminders minus those we kept
+            n_removed = sum(
+                0 if _SKILL_LISTING_RE.search(m) else 1 for m in matches
+            )
+            count += n_removed
             if stripped:
-                # mixed content — keep residual user text
                 block["text"] = stripped
                 new_content.append(block)
-            # else: block was entirely reminders → drop it
+            # else: block became empty after stripping → drop it
         msg["content"] = new_content
     return count
 

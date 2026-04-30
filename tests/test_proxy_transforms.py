@@ -47,6 +47,55 @@ def test_strip_block_entirely_reminder_drops_block():
     assert body["messages"][0]["content"][0]["text"] == "real prompt"
 
 
+def test_strip_preserves_skill_catalogue_reminder():
+    """Reminders carrying the skill catalogue must NOT be stripped —
+    they're the only channel through which the model learns which
+    skills the run has linked. Stripping them silently disables every
+    skill."""
+    skill_catalogue = (
+        "<system-reminder>\n"
+        "The following skills are available for use with the Skill tool:\n"
+        "- apply-discount: Use to compute the tier discount.\n"
+        "- say-hello: Greets the user.\n"
+        "</system-reminder>"
+    )
+    body = {
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": "User prompt.\n\n" + skill_catalogue},
+            ]},
+        ],
+    }
+    n = _strip_user_system_reminders(body)
+    assert n == 0, "skill catalogue must be preserved"
+    text = body["messages"][0]["content"][0]["text"]
+    assert "apply-discount" in text
+    assert "<system-reminder>" in text
+
+
+def test_strip_removes_other_reminders_but_keeps_skill_catalogue():
+    """Mixed: a noise reminder is stripped, the skill catalogue stays."""
+    body = {
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": (
+                    "<system-reminder>The date is now 2026-05-01.</system-reminder>\n"
+                    "User prompt.\n"
+                    "<system-reminder>\n"
+                    "The following skills are available for use with the Skill tool:\n"
+                    "- apply-discount: ...\n"
+                    "</system-reminder>"
+                )},
+            ]},
+        ],
+    }
+    n = _strip_user_system_reminders(body)
+    assert n == 1, "exactly one (the date reminder) should be stripped"
+    text = body["messages"][0]["content"][0]["text"]
+    assert "date is now" not in text
+    assert "apply-discount" in text
+
+
 def test_strip_mixed_keeps_residual():
     body = {
         "messages": [

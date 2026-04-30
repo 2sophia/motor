@@ -95,7 +95,6 @@ async def test_simple_verdict_schema(api_key: str, tmp_path: Path) -> None:
                 "'the bank publishes threshold rates on a quarterly basis'."
             ),
             tools=[],  # no tools — pure classification
-            allowed_tools=[],
             max_turns=3,
             output_schema=Verdict,
         ))
@@ -145,7 +144,6 @@ async def test_multi_turn_with_read_tool(api_key: str, tmp_path: Path) -> None:
                 "metadata of the control."
             ),
             tools=["Read"],
-            allowed_tools=["Read"],
             attachments=[{"control.md": sample}],
             max_turns=8,
             output_schema=ControlMetadata,

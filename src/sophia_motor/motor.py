@@ -12,9 +12,9 @@ Class API:
             print(event)
 
         result = await motor.run(RunTask(
-            prompt="Read the file scratch/note.txt and summarize it.",
-            allowed_tools=["Read"],
-            cwd_files={"scratch/note.txt": "..."},
+            prompt="Read the file note.txt and summarize it.",
+            tools=["Read"],
+            attachments={"note.txt": "..."},
         ))
 
 A single Motor instance handles one run at a time (the proxy is bound to the
@@ -23,6 +23,7 @@ active run for audit-dump tagging). For parallelism, instantiate N Motors.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import shutil
@@ -665,7 +666,7 @@ def _tool_result_preview(block: ToolResultBlock) -> str:
 # ─────────────────────────────────────────────────────────────────────────
 
 def _normalize_to_list(value) -> list:
-    """Normalize singolo|lista|None → lista. Pure helper, no side effects."""
+    """Normalize single | list | None → list. Pure helper, no side effects."""
     if value is None:
         return []
     if isinstance(value, list):
@@ -755,11 +756,40 @@ def _validate_attachments(items: list) -> None:
             )
 
 
+def _link_file(src: Path, target: Path) -> None:
+    """Materialize `target` as a zero-copy reference to `src`.
+
+    Strategy: try a hard link first. Hard links share an inode with the
+    source — the SDK's Glob tool (which delegates to `ripgrep --files`,
+    no `-L`/`--follow` flag) treats them as regular files and includes
+    them in results. A plain symlink would be silently ignored by
+    ripgrep, hiding the file from the agent.
+
+    Fallback: if the source and target live on different filesystems
+    (`EXDEV`) hard-linking is impossible — we degrade to a symlink. The
+    agent may then need to be told the file path explicitly (via the
+    user prompt) since glob discovery will skip it.
+    """
+    try:
+        os.link(src, target)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        target.symlink_to(src)
+
+
 def _materialize_attachments(attachments_dir: Path, items: list) -> dict[str, str]:
-    """Symlink real paths and write inline files under `attachments_dir`.
+    """Materialize attachments under `attachments_dir`.
+
+    - **Inline `dict[str, str]`** → real file written verbatim.
+    - **`Path` to a file** → hard-linked (or symlink fallback on EXDEV).
+    - **`Path` to a directory** → mirrored as a real directory tree,
+      with each leaf file hard-linked to the source (or symlink
+      fallback on EXDEV). A single dir-level symlink would be invisible
+      to glob, so we always rebuild the tree.
 
     Returns a manifest {final_relative_path → source_repr}:
-      - "→ <abs_path> (link)" for symlinks
+      - "→ <abs_path> (link)" for hard-linked / symlinked files
       - "<inline>" for inline files
     """
     manifest: dict[str, str] = {}
@@ -770,10 +800,22 @@ def _materialize_attachments(attachments_dir: Path, items: list) -> dict[str, st
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
                 manifest[str(Path(rel_path))] = "<inline>"
+            continue
+
+        src = Path(item).resolve(strict=True)
+        if src.is_dir():
+            for child in src.rglob("*"):
+                if not child.is_file():
+                    continue
+                rel = child.relative_to(src)
+                target = attachments_dir / src.name / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                child_resolved = child.resolve(strict=True)
+                _link_file(child_resolved, target)
+                manifest[str(Path(src.name) / rel)] = f"→ {child_resolved} (link)"
         else:
-            src = Path(item).resolve(strict=True)
             target = attachments_dir / src.name
-            target.symlink_to(src)
+            _link_file(src, target)
             manifest[src.name] = f"→ {src} (link)"
     return manifest
 

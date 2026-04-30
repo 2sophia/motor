@@ -64,7 +64,6 @@ async def main() -> int:
                 "absolute paths."
             ),
             tools=["Read"],
-            allowed_tools=["Read"],
             attachments=[{"sample.txt": SAMPLE_TEXT}],
             max_turns=5,
         ))

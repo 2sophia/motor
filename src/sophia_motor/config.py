@@ -265,11 +265,14 @@ class MotorConfig(BaseModel):
         description="Default system prompt applied when RunTask.system is None.",
     )
     default_tools: Optional[list[str]] = Field(
-        default=None,
+        default_factory=list,
         description=(
             "Default hard tool whitelist (what the model can SEE) when "
-            "RunTask.tools is None. None means 'SDK preset' (all built-ins). "
-            "Use [] to default to no tools."
+            "RunTask.tools is None. Default `[]` = no tools at all "
+            "(pure reasoning). Set to a list (e.g. ['Read', 'Glob']) to "
+            "give every task those tools by default. Set to None to fall "
+            "back to the SDK's `claude_code` preset (all built-ins) — "
+            "explicit opt-in only."
         ),
     )
     default_allowed_tools: Optional[list[str]] = Field(

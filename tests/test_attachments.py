@@ -149,32 +149,53 @@ def test_materialize_inline_with_subdir(tmp_path):
     assert (target / "sub" / "note.txt").read_text() == "x"
 
 
-def test_materialize_real_file_creates_symlink(tmp_path):
+def test_materialize_real_file_is_hardlinked(tmp_path):
+    """Single-file attachments are hard-linked: same inode as the source,
+    invisible to ripgrep's symlink-skip behaviour, zero storage cost."""
     src = tmp_path / "data.txt"
     src.write_text("payload")
     target = tmp_path / "att"
     target.mkdir()
     manifest = _materialize_attachments(target, [src])
+
     linked = target / "data.txt"
-    assert linked.is_symlink()
-    assert linked.read_text() == "payload"  # link risolve correttamente
+    # Hard-link: same inode as the source, NOT a symlink.
+    assert not linked.is_symlink()
+    assert linked.stat().st_ino == src.stat().st_ino
+    assert linked.read_text() == "payload"
     assert manifest["data.txt"].startswith("→ ")
     assert manifest["data.txt"].endswith("(link)")
     assert str(src.resolve()) in manifest["data.txt"]
 
 
-def test_materialize_real_dir_creates_symlink(tmp_path):
+def test_materialize_real_dir_mirrors_as_tree_of_hardlinks(tmp_path):
+    """Directory attachments are mirrored as real dirs with each leaf
+    file hard-linked. Hard-links are seen as regular files by ripgrep
+    (the SDK Glob backend), so every file remains discoverable AND we
+    pay zero storage cost on the same filesystem."""
     src = tmp_path / "docs"
     src.mkdir()
     (src / "a.txt").write_text("A")
-    (src / "b.txt").write_text("B")
+    (src / "sub").mkdir()
+    (src / "sub" / "b.txt").write_text("B")
     target = tmp_path / "att"
     target.mkdir()
-    _materialize_attachments(target, [src])
-    linked = target / "docs"
-    assert linked.is_symlink()
-    assert (linked / "a.txt").read_text() == "A"
-    assert (linked / "b.txt").read_text() == "B"
+    manifest = _materialize_attachments(target, [src])
+
+    mirrored = target / "docs"
+    assert mirrored.is_dir() and not mirrored.is_symlink()
+    # Each leaf is a hard-link sharing the inode of its source counterpart.
+    a = mirrored / "a.txt"
+    assert not a.is_symlink()
+    assert a.stat().st_ino == (src / "a.txt").stat().st_ino
+    sub_dir = mirrored / "sub"
+    assert sub_dir.is_dir() and not sub_dir.is_symlink()
+    b = sub_dir / "b.txt"
+    assert not b.is_symlink()
+    assert b.stat().st_ino == (src / "sub" / "b.txt").stat().st_ino
+    # Manifest tags every leaf as a link.
+    assert manifest[str(Path("docs/a.txt"))].endswith("(link)")
+    assert manifest[str(Path("docs/sub/b.txt"))].endswith("(link)")
 
 
 def test_materialize_mixed(tmp_path):
@@ -187,8 +208,10 @@ def test_materialize_mixed(tmp_path):
         {"note.txt": "inline content"},
         {"sub/n.txt": "deep"},
     ])
-    assert (target / "doc.pdf").is_symlink()
-    assert (target / "doc.pdf").read_bytes() == b"PDF"
+    doc = target / "doc.pdf"
+    assert not doc.is_symlink()  # hard-linked, not a symlink
+    assert doc.stat().st_ino == src.stat().st_ino
+    assert doc.read_bytes() == b"PDF"
     note = target / "note.txt"
     assert note.is_file() and not note.is_symlink()
     assert note.read_text() == "inline content"

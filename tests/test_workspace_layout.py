@@ -54,12 +54,12 @@ def test_claude_dir_has_skills_subdir(tmp_path: Path) -> None:
 
 
 def test_skills_are_symlinked_into_claude_dir(tmp_path: Path) -> None:
-    skills_src = Path(__file__).parent.parent / "examples" / "skills_example"
+    skills_src = Path(__file__).parent.parent / "examples" / "skills" / "skills_local"
     _, _, _, claude_dir, _, manifest = _setup(tmp_path, skills_root=skills_src)
-    say_hello = claude_dir / "skills" / "say_hello"
+    say_hello = claude_dir / "skills" / "say-hello"
     assert say_hello.is_symlink()
-    assert say_hello.resolve() == (skills_src / "say_hello").resolve()
-    assert "say_hello" in manifest
+    assert say_hello.resolve() == (skills_src / "say-hello").resolve()
+    assert "say-hello" in manifest
 
 
 def test_audit_dir_under_run_root_not_agent_cwd(tmp_path: Path) -> None:

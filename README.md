@@ -349,11 +349,11 @@ Settings on the single call — passed to `motor.run(RunTask(...))`. Anything le
 |---|---|---|
 | `prompt` | `str` | **Required.** The user-message instruction |
 | `system` | `str?` | System prompt for this task (overrides `default_system`) |
-| `tools` | `list[str]?` | Hard whitelist of tools the model can SEE. `[]` = no tools, `None` = use default |
-| `allowed_tools` | `list[str]?` | Tools that auto-run without permission prompt |
+| `tools` | `list[str]?` | Hard whitelist of tools the model can SEE. `[]` = no tools, `None` = fall back to `MotorConfig.default_tools` (which itself defaults to `[]` — principle of least privilege) |
+| `allowed_tools` | `list[str]?` | Permission skip — rarely needed: the motor runs with `permission_mode="bypassPermissions"` so every tool already auto-runs. Leave `None`. |
 | `disallowed_tools` | `list[str]?` | Tools hard-blocked from the model's context |
 | `max_turns` | `int?` | Per-task turn cap (overrides default) |
-| `attachments` | `Path \| dict \| list?` | Files the agent can read. `Path` → symlink, `dict[str,str]` → inline file, mixed list supported |
+| `attachments` | `Path \| dict \| list?` | Inputs the agent can read. File `Path` → hard-linked (zero-copy, glob-visible), directory `Path` → mirrored as real dirs with file-level hard-links, `dict[str,str]` → inline file. Symlink fallback on cross-filesystem. Mixed list supported |
 | `skills` | `Path \| str \| list?` | Skill source folder(s). Each subdir with `SKILL.md` is linked into the run |
 | `disallowed_skills` | `list[str]` | Skill names to skip even if found in source |
 | `output_schema` | `type[BaseModel]?` | Pydantic class — agent commits to this shape, returned in `RunResult.output_data` |
