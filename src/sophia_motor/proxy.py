@@ -56,8 +56,13 @@ class ProxyServer:
     # ── lifecycle ────────────────────────────────────────────────────
 
     async def start(self) -> str:
-        """Bind to a free port and start serving. Returns the base URL."""
-        self.port = _find_free_port()
+        """Bind to a port and start serving. Returns the base URL.
+
+        If `config.proxy_port` is set, binds to that explicit port (raises if
+        already in use). Otherwise asks the kernel for a free port — safe for
+        parallel Motor instances.
+        """
+        self.port = self.config.proxy_port or _find_free_port()
         ucfg = uvicorn.Config(
             self.app,
             host=self.config.proxy_host,

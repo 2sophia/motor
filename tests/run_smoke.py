@@ -49,8 +49,16 @@ async def main() -> int:
     async with Motor(config) as motor:
         result = await motor.run(RunTask(
             prompt=(
-                "Leggi il file scratch/sample.txt e produci un breve riassunto "
-                "in 2 frasi sui contenuti normativi citati. Rispondi in italiano."
+                "Leggi il file `scratch/sample.txt` con path relativo "
+                "alla tua working directory corrente (NON usare path assoluti — "
+                "sei in una sandbox e il file è dentro la tua cwd). "
+                "Poi produci un breve riassunto in 2 frasi sui contenuti "
+                "normativi citati. Rispondi in italiano."
+            ),
+            system_prompt=(
+                "You are a compliance reasoning agent. All file paths you use "
+                "with the Read tool MUST be relative to the current working "
+                "directory. Never use absolute paths."
             ),
             allowed_tools=["Read"],
             cwd_files={"scratch/sample.txt": SAMPLE_TEXT},

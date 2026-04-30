@@ -50,6 +50,15 @@ class MotorConfig(BaseModel):
         ),
     )
     proxy_host: str = "127.0.0.1"
+    proxy_port: int | None = Field(
+        default=None,
+        description=(
+            "If None, the proxy binds to a free kernel-assigned port (recommended "
+            "for parallel Motor instances). Set to a specific port to make the "
+            "proxy URL stable — useful for debugging with curl, sniffer, or fixed "
+            "firewall rules."
+        ),
+    )
     proxy_dump_payloads: bool = Field(
         default=True,
         description="Persist every request and response body under <run>/audit/.",
