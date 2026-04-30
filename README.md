@@ -77,71 +77,91 @@ For long-running services (FastAPI, Celery), instance the motor once and call `a
 
 ---
 
-## The shape of a smart function
+## Examples
+
+Four real, copy-pasteable patterns. Same `motor` instance, different RunTask.
 
 ```python
-import asyncio
-from typing import Literal
-from pathlib import Path
-from pydantic import BaseModel
 from sophia_motor import Motor, MotorConfig, RunTask
+motor = Motor()   # one instance, used everywhere below
+```
 
+### 1 · Hello world — free-form text out
 
-# ── 1. Define the contract — a Pydantic class. Anything goes.
-class Decision(BaseModel):
-    verdict: Literal["APPROVE", "REJECT", "ESCALATE"]
-    reasoning: str
-    confidence: float
+```python
+result = await motor.run(RunTask(
+    prompt="Translate to English: 'Buongiorno mondo, come stai oggi?'",
+))
+print(result.output_text)
+# → "Good morning world, how are you today?"
+```
 
+### 2 · Attachments — the agent reads your files
 
-# ── 2. Instance the motor ONCE, at module top-level.
-motor = Motor(MotorConfig(
-    default_system="You are a senior policy analyst.",
-    default_output_schema=Decision,
-    default_tools=["Read", "Skill"],   # Skill must be in tools to invoke linked skills
-    default_skills=Path("./policy/"),
+```python
+from pathlib import Path
+
+result = await motor.run(RunTask(
+    prompt="Summarize attachments/article.pdf in 3 bullet points.",
+    tools=["Read"],
+    attachments=Path("./article.pdf"),       # symlinked into the run, agent-readable
+))
+print(result.output_text)
+```
+
+Mix files and inline text in a single list:
+
+```python
+attachments=[
+    Path("./report.pdf"),                    # real file → symlink
+    Path("./data/"),                         # whole dir → symlink
+    {"notes.md": "Prefer formal tone."},     # inline file written into the run
+]
+```
+
+### 3 · Skills — drop a folder, get a new capability
+
+A skill is a folder with a `SKILL.md` (frontmatter + instructions). The agent calls it via the `Skill` tool.
+
+```python
+result = await motor.run(RunTask(
+    prompt="Use the translate-it-en skill on: 'Buongiorno mondo'",
+    tools=["Skill"],                         # required to invoke any skill
+    skills=Path("./skills/"),                # folder containing translate-it-en/SKILL.md
+))
+```
+
+Multi-source + opt-out:
+
+```python
+skills=[Path("./project_skills/"), Path("./shared_skills/")]
+disallowed_skills=["heavy-skill"]            # skip this one
+```
+
+### 4 · Structured output — Pydantic out, never parse JSON again
+
+```python
+from typing import Literal
+from pydantic import BaseModel, Field
+
+class DocClass(BaseModel):
+    category: Literal["invoice", "contract", "email", "report"]
+    confidence: float = Field(ge=0, le=1)
+    reason: str
+
+result = await motor.run(RunTask(
+    prompt="Classify attachments/doc.pdf",
+    tools=["Read"],
+    attachments=Path("./doc.pdf"),
+    output_schema=DocClass,                  # ← the agent commits to this shape
 ))
 
-
-# ── 3. Wrap each smart function as a normal Python async def.
-async def assess(case_id: str, summary: str) -> Decision:
-    result = await motor.run(RunTask(
-        prompt=f"Case {case_id}\n\n{summary}\n\nApprove, reject or escalate?",
-    ))
-    return result.output_data
-
-
-# ── 4. Use it like any other function.
-async def main():
-    d = await assess("C-2026-042", "Client requests credit line increase…")
-    if d.verdict == "ESCALATE":
-        notify_human(d.reasoning, confidence=d.confidence)
+doc: DocClass = result.output_data           # ← Pydantic-validated instance
+print(doc.category)                          # "invoice"
+print(doc.confidence)                        # 0.94
 ```
 
-That's it. No prompt-engineering boilerplate, no JSON parsing, no retry loop hand-rolled. The agent does it all; **you write Python**.
-
----
-
-## How it feels
-
-```
-┌─────────────────────────────────────┐         ┌─────────────────────────────┐
-│ Without Sophia Motor                │         │ With Sophia Motor           │
-├─────────────────────────────────────┤         ├─────────────────────────────┤
-│  prompt = f"...{user_input}..."     │         │  result = await motor.run(  │
-│  resp   = await client.messages(    │   ──▶   │      RunTask(               │
-│      model=..., system=...,         │         │          prompt=...,        │
-│      tools=[...], max_tokens=...)   │         │          output_schema=Foo, │
-│  text   = resp.content[0].text      │         │      ),                     │
-│  try:                               │         │  )                          │
-│      data = json.loads(text)        │         │  data: Foo = result.output_data
-│      Foo(**data)                    │         │                             │
-│  except (JSONDecodeError, …):       │         │   ← already validated.      │
-│      retry…  rephrase…  give up…    │         │   ← already typed.          │
-└─────────────────────────────────────┘         └─────────────────────────────┘
-```
-
-**Same agentic loop. Same tools. Same multi-turn reasoning. Less code. Stronger guarantees.**
+The agent runs its full multi-turn loop (reads the PDF, reasons, decides) and at the end emits a JSON that the CLI validates server-side against your schema. You get back a real Python object — not a string to parse, not a `dict` to validate yourself.
 
 ---
 
