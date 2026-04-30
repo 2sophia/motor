@@ -56,6 +56,8 @@ DEFAULT_DISALLOWED_TOOLS: list[str] = [
     "mcp__claude_ai_Gmail__complete_authentication",
     "mcp__claude_ai_Google_Calendar__authenticate",
     "mcp__claude_ai_Google_Calendar__complete_authentication",
+    "mcp__claude_ai_Google_Drive__authenticate",
+    "mcp__claude_ai_Google_Drive__complete_authentication",
 ]
 
 
