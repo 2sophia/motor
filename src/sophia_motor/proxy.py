@@ -135,6 +135,9 @@ class ProxyServer:
             stripped = (
                 _strip_sdk_noise(body) if self.config.proxy_strip_sdk_noise else 0
             )
+            rewritten_tools = _rewrite_tool_descriptions(
+                body, self.config.tool_description_overrides,
+            )
 
             self._req_counter += 1
             req_idx = self._req_counter
@@ -156,6 +159,7 @@ class ProxyServer:
                     "n_tools": len(body.get("tools", [])),
                     "stream": body.get("stream", False),
                     "stripped_blocks": stripped,
+                    "tool_descriptions_rewritten": rewritten_tools,
                 },
             ))
             await self.events.log(
@@ -308,6 +312,28 @@ def _strip_sdk_noise(body: dict) -> int:
     if removed:
         body["system"] = new_blocks
     return removed
+
+
+def _rewrite_tool_descriptions(body: dict, overrides: dict[str, str]) -> int:
+    """Replace the top-level `description` of tools whose name is in `overrides`.
+
+    `input_schema` is left intact so the parameter contract is preserved.
+    Returns the number of descriptions actually replaced.
+    """
+    if not overrides:
+        return 0
+    tools = body.get("tools")
+    if not isinstance(tools, list):
+        return 0
+    count = 0
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name")
+        if name in overrides:
+            tool["description"] = overrides[name]
+            count += 1
+    return count
 
 
 def _forward_headers(req: Request, config) -> dict:

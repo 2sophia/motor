@@ -7,6 +7,32 @@ from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 
 
+# Tool description overrides applied at proxy layer.
+# The default Claude CLI ships with verbose, dev-oriented descriptions for the
+# core tools that don't fit a sandboxed agent run: Read says "use absolute
+# paths", Bash mentions git/PR workflow, Write says "NEVER create .md files".
+# We replace just the parts that matter for the motor — chiefly the path
+# policy on Read — and leave the rest to the SDK default. Users can extend
+# via MotorConfig.tool_description_overrides.
+DEFAULT_TOOL_DESCRIPTION_OVERRIDES: dict[str, str] = {
+    "Read": (
+        "Read a text file from the local filesystem.\n\n"
+        "PATH POLICY (enforced):\n"
+        "- The `file_path` parameter MUST be a path relative to your current "
+        "working directory (cwd).\n"
+        "- NEVER use absolute paths. Your run is isolated inside a per-run "
+        "sandbox; absolute paths from elsewhere on the filesystem will not "
+        "resolve correctly.\n"
+        "- Files seeded by the caller appear at their relative path under "
+        "cwd. For example, a seed file declared as `scratch/sample.txt` is "
+        "read with `Read(file_path=\"scratch/sample.txt\")`.\n\n"
+        "Returns the file content prefixed with line numbers in the format "
+        "`N\\tcontent`. When passing this output to Edit, strip the line-"
+        "number prefix first."
+    ),
+}
+
+
 # Tools blocked by default. Mirrors the sophia-agent DISALLOWED_TOOLS list.
 # A compliance-reasoning agent has no business browsing the web, spawning
 # subagents, scheduling cron, opening notebooks, or hitting MCP auth flows.
@@ -92,6 +118,15 @@ class MotorConfig(BaseModel):
     proxy_strip_sdk_noise: bool = Field(
         default=True,
         description="Strip SDK billing-header and identity blocks from system field.",
+    )
+    tool_description_overrides: dict[str, str] = Field(
+        default_factory=lambda: dict(DEFAULT_TOOL_DESCRIPTION_OVERRIDES),
+        description=(
+            "Map of tool_name → description. The proxy replaces the default "
+            "SDK description for matching tools before forwarding upstream. "
+            "Set to {} to disable. Override per Motor instance to attach "
+            "program-specific guidance (e.g. domain-specific Read semantics)."
+        ),
     )
 
     # ── Logging ──────────────────────────────────────────────────────
