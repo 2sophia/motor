@@ -208,25 +208,6 @@ Verified path: agent calls `Read` once, twice, three times — finds the relevan
 
 ---
 
-## Skills
-
-Drop a folder of `SKILL.md` files. The agent gets new capabilities by name.
-
-```python
-motor = Motor(MotorConfig(
-    default_tools=["Skill"],   # Skill tool must be on the whitelist
-    default_skills=[
-        Path("./project_skills/"),     # your domain skills
-        Path("./shared_skills/"),      # org-wide reusables
-    ],
-    default_disallowed_skills=["heavy-skill"],   # selectively opt-out
-))
-```
-
-Each `<source>/<skill_name>/SKILL.md` is linked into the run's config dir at runtime. **Multi-source**, conflict detection, no copy.
-
----
-
 ## One motor, N smart functions
 
 Boot the motor once at module top-level. Wrap each task as a normal Python `async def`. Same proxy, same audit trail, same defaults — N typed functions, each with its own Pydantic schema.
