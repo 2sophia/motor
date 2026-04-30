@@ -153,6 +153,16 @@ class MotorConfig(BaseModel):
         default=True,
         description="Strip SDK billing-header and identity blocks from system field.",
     )
+    proxy_strip_user_system_reminders: bool = Field(
+        default=True,
+        description=(
+            "Strip <system-reminder>...</system-reminder> blocks injected by "
+            "the Claude CLI into USER messages from turn 2 onwards (skill "
+            "listings, date changes, 'task tools haven't been used recently' "
+            "reminders). For task-driven agent runs they're noise; disable "
+            "only if you want to see them for debug."
+        ),
+    )
     tool_description_overrides: dict[str, str] = Field(
         default_factory=lambda: dict(DEFAULT_TOOL_DESCRIPTION_OVERRIDES),
         description=(

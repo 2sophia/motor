@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import socket
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -135,6 +136,11 @@ class ProxyServer:
             stripped = (
                 _strip_sdk_noise(body) if self.config.proxy_strip_sdk_noise else 0
             )
+            user_reminders_stripped = (
+                _strip_user_system_reminders(body)
+                if self.config.proxy_strip_user_system_reminders
+                else 0
+            )
             rewritten_tools = _rewrite_tool_descriptions(
                 body, self.config.tool_description_overrides,
             )
@@ -159,6 +165,7 @@ class ProxyServer:
                     "n_tools": len(body.get("tools", [])),
                     "stream": body.get("stream", False),
                     "stripped_blocks": stripped,
+                    "user_reminders_stripped": user_reminders_stripped,
                     "tool_descriptions_rewritten": rewritten_tools,
                 },
             ))
@@ -312,6 +319,57 @@ def _strip_sdk_noise(body: dict) -> int:
     if removed:
         body["system"] = new_blocks
     return removed
+
+
+_SYSTEM_REMINDER_RE = re.compile(
+    r"<system-reminder>.*?</system-reminder>\s*",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_user_system_reminders(body: dict) -> int:
+    """Remove <system-reminder>...</system-reminder> blocks from USER messages.
+
+    The Claude CLI subprocess injects these from turn 2 onwards (skill
+    listing, currentDate, 'task tools haven't been used recently', etc).
+    For task-driven agent runs they're noise — they consume tokens, distract
+    the model, and aren't relevant to the compliance task.
+
+    A text block whose content is ENTIRELY system-reminders is dropped from
+    the message. A text block with mixed content (reminder + actual user
+    text) keeps the residual user text and drops only the reminder spans.
+
+    Returns the number of reminder blocks (matches) removed across the body.
+    """
+    count = 0
+    for msg in body.get("messages", []):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        new_content: list = []
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                new_content.append(block)
+                continue
+            text = block.get("text", "")
+            if not isinstance(text, str) or "<system-reminder>" not in text:
+                new_content.append(block)
+                continue
+            n = len(_SYSTEM_REMINDER_RE.findall(text))
+            if n == 0:
+                new_content.append(block)
+                continue
+            stripped = _SYSTEM_REMINDER_RE.sub("", text).strip()
+            count += n
+            if stripped:
+                # mixed content — keep residual user text
+                block["text"] = stripped
+                new_content.append(block)
+            # else: block was entirely reminders → drop it
+        msg["content"] = new_content
+    return count
 
 
 def _rewrite_tool_descriptions(body: dict, overrides: dict[str, str]) -> int:
