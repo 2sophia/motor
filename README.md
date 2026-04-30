@@ -9,8 +9,11 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Powered by Claude](https://img.shields.io/badge/powered%20by-claude--agent--sdk-orange.svg)](https://github.com/anthropics/claude-agent-sdk-python)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-yellow.svg)](#status)
 
 </div>
+
+> ⚠️ **Alpha software.** Sophia Motor lets the agent execute tools (`Read`, `Skill`, optionally more) on the host where it runs. The audit dump and guardrails are in active development. **Do not point it at production data, untrusted user input, or systems you wouldn't want a curious agent to poke around in** — at least not without your own sandboxing layer on top. Useful for prototyping, internal tools, dev workflows. Production-ready hardening (sandboxed FS, guard hooks, rate limits, content filters) coming in upcoming releases.
 
 ---
 
