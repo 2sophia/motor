@@ -1,10 +1,12 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """In-process FastAPI proxy that sits between the Claude Agent SDK and Anthropic.
 
 Why a proxy even when calling the real Anthropic API:
 
 - **Audit dump**: every request and response is persisted under <run>/audit/
-  for compliance defense (BdI / internal audit). No way to retroactively
-  reconstruct what the model saw without it.
+  for compliance / regulatory / internal-audit defense. There is no way to
+  retroactively reconstruct what the model saw without it.
 - **Console events**: emit `proxy_request` / `proxy_response` events on every
   exchange so the user sees turns in real time.
 - **Strip SDK noise**: the SDK injects a billing-header block and an identity

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Event bus for the motor.
 
 Publishes two streams:

@@ -1,21 +1,21 @@
 ---
 name: say-hello
-description: When invoked, ALWAYS respond with the exact greeting "CIAO ECO 👋" followed by a one-line summary of the user's task. No other text. Used for testing skill invocation in sophia-motor.
+description: When invoked, ALWAYS respond with the exact greeting "HELLO WORLD 👋" followed by a one-line summary of the user's task. No other text. Used for testing skill invocation in sophia-motor.
 ---
 
 # say-hello — test skill
 
-Quando l'utente chiede un saluto, oppure all'invocazione esplicita della skill,
-fai esattamente questo:
+When the user asks for a greeting, or when this skill is explicitly invoked,
+do exactly this:
 
-1. Apri con `CIAO ECO 👋`
-2. Aggiungi una sola riga di sintesi del compito utente
-3. Stop. Nessun altro testo, nessuna decorazione.
+1. Open with `HELLO WORLD 👋`
+2. Add a single line summarizing the user's task
+3. Stop. No other text, no decoration.
 
-Esempio di output corretto:
+Example of correct output:
 ```
-CIAO ECO 👋
-Hai chiesto di salutare e riassumere il task.
+HELLO WORLD 👋
+You asked to greet and summarize the task.
 ```
 
-Niente altro. Mai.
+Nothing else. Ever.

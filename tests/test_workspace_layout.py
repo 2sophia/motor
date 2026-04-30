@@ -1,18 +1,18 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Workspace layout — deterministic structure tests, no API calls.
 
-Verifies the sophia-agent pattern: CLAUDE_CONFIG_DIR is a SIBLING of the
-SDK cwd, never a descendant. When `.claude/` lives inside the cwd, the
-CLI mis-resolves session paths and recreates the workspace structure
-inside cwd as `./.runs/<RID>/agent_cwd/.claude/` — verified empirically.
+Verifies that CLAUDE_CONFIG_DIR is laid out as a SIBLING of the SDK cwd,
+never a descendant. When `.claude/` lives inside the cwd, the CLI
+mis-resolves session paths and recreates the workspace structure inside
+cwd as `./.runs/<RID>/agent_cwd/.claude/` — verified empirically.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sophia_motor import Motor, MotorConfig  # noqa: E402
+from sophia_motor import Motor, MotorConfig
 
 
 def _setup(tmp_path: Path, *, skills_root: Path | None = None):

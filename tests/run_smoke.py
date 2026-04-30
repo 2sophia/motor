@@ -1,10 +1,11 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Standalone smoke test (non-pytest).
 
-Run with sophia-agent's venv until we have a dedicated one:
+Requires the package to be installed in the active environment:
 
-    cd /home/mwspace/htdocs/sophia-motor
-    ANTHROPIC_API_KEY=sk-ant-... \\
-      /home/mwspace/htdocs/sophia-agent/.venv/bin/python tests/run_smoke.py
+    pip install -e ".[dev]"
+    ANTHROPIC_API_KEY=sk-ant-... python tests/run_smoke.py
 
 You will see the live event/log stream on stdout and an audit dir under
 ./.runs/<run_id>/ when the run completes.
@@ -16,26 +17,30 @@ import os
 import sys
 from pathlib import Path
 
-# Make `import sophia_motor` work without `pip install -e .`
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from sophia_motor import Motor, MotorConfig, RunTask  # noqa: E402
+try:
+    from sophia_motor import Motor, MotorConfig, RunTask
+except ModuleNotFoundError as exc:
+    print(
+        f"ERROR: {exc}\n"
+        "       Install the package first: pip install -e \".[dev]\"",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 SAMPLE_TEXT = """\
-La banca ViViBanca pubblica trimestralmente i tassi soglia dell'usura ai sensi
-dell'articolo 2 della legge 108/1996. Il tasso soglia per il primo trimestre 2026
-è fissato al 12.5% per il credito al consumo. La policy interna PRGN000007
-prevede l'aggiornamento dei contratti entro 15 giorni dalla pubblicazione del
-decreto MEF.
+Acme Bank publishes quarterly threshold rates pursuant to article 2 of
+the relevant consumer credit regulation. The threshold rate for Q1 2026
+is set at 12.5% for consumer credit products. Internal policy PR-0007
+requires contract updates within 15 days of decree publication.
 """
 
 
 async def main() -> int:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print(
-            "ERROR: ANTHROPIC_API_KEY non impostato.\n"
-            "       Esporta la chiave prima di lanciare il test."
+            "ERROR: ANTHROPIC_API_KEY is not set.\n"
+            "       Export the key before running the smoke test."
         )
         return 2
 
@@ -49,9 +54,9 @@ async def main() -> int:
     async with Motor(config) as motor:
         result = await motor.run(RunTask(
             prompt=(
-                "Leggi il file `attachments/sample.txt` (path relativo alla "
-                "tua working directory) e produci un breve riassunto in 2 "
-                "frasi sui contenuti normativi citati. Rispondi in italiano."
+                "Read the file `attachments/sample.txt` (path relative to "
+                "your working directory) and produce a brief two-sentence "
+                "summary of the regulatory content cited. Reply in English."
             ),
             system=(
                 "You are a compliance reasoning agent. All file paths you use "

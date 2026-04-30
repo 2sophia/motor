@@ -371,6 +371,33 @@ What `motor.run(...)` returns.
 | `audit_dir` | `Path` | `<run>/audit/` (request_*.json + response_*.sse) |
 | `workspace_dir` | `Path` | The full run dir |
 
+## Development
+
+Clone the repo and install in editable mode with dev extras:
+
+```bash
+git clone https://github.com/2sophia/motor.git sophia-motor
+cd sophia-motor
+python3.12 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+```
+
+Run the test suite:
+
+```bash
+.venv/bin/pytest tests/ -v
+```
+
+The deterministic suite (no API key) runs in under a second. Live tests
+that hit the real Anthropic API skip cleanly when `ANTHROPIC_API_KEY` is
+not set, so the suite stays green on CI without secrets.
+
+To run the standalone smoke test against the real API:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... .venv/bin/python tests/run_smoke.py
+```
+
 ## License & attribution
 
 MIT.

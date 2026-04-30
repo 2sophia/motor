@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Built-in PreToolUse guard — strict / permissive / off mode tests.
 
 Each test simulates the SDK's PreToolUse hook call shape:
@@ -9,14 +11,12 @@ and asserts that the hook either allows ({}) or blocks
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sophia_motor.guard import make_guard_hook  # noqa: E402
+from sophia_motor.guard import make_guard_hook
 
 
 @pytest.fixture

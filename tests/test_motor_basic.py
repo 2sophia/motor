@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Smoke tests for sophia-motor — require a real ANTHROPIC_API_KEY.
 
 Tests skip cleanly when the key is missing so CI without secrets doesn't
@@ -8,20 +10,18 @@ fail. To run:
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sophia_motor import Motor, MotorConfig, RunTask  # noqa: E402
+from sophia_motor import Motor, MotorConfig, RunTask
 
 
 SAMPLE_TEXT = """\
-La banca ViViBanca pubblica trimestralmente i tassi soglia ai sensi
-dell'articolo 2 della legge 108/1996. Il tasso soglia per il primo trimestre
-2026 è fissato al 12.5% per il credito al consumo.
+Acme Bank publishes quarterly threshold rates pursuant to article 2 of
+the relevant consumer credit regulation. The threshold rate for Q1 2026
+is set at 12.5% for consumer credit products.
 """
 
 
@@ -64,9 +64,8 @@ async def test_motor_runs_simple_read_task(api_key, tmp_path):
 
         result = await motor.run(RunTask(
             prompt=(
-                "Leggi il file attachments/sample.txt e produci un breve "
-                "riassunto in 2 frasi sui contenuti normativi citati. "
-                "Rispondi in italiano."
+                "Read attachments/sample.txt and produce a brief two-sentence "
+                "summary of the regulatory content cited. Reply in English."
             ),
             tools=["Read"],
             allowed_tools=["Read"],

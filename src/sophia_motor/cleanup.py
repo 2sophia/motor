@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Workspace cleanup helpers.
 
 Each `Motor.run()` persists a directory under `workspace_root/<run_id>/` with

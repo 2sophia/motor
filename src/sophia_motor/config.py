@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Configuration for a Motor instance."""
 from __future__ import annotations
 
@@ -63,8 +65,8 @@ DEFAULT_TOOL_DESCRIPTION_OVERRIDES: dict[str, str] = {
 }
 
 
-# Tools blocked by default. Mirrors the sophia-agent DISALLOWED_TOOLS list,
-# plus the deferred tools that the SDK CLI injects even when `tools=` is a
+# Tools blocked by default. Covers web-access, agentic/interactive, and
+# the deferred tools that the SDK CLI injects even when `tools=` is a
 # strict whitelist (Monitor, PushNotification, ScheduleWakeup — IDE-style
 # tools that have no place in a programmatic motor run).
 DEFAULT_DISALLOWED_TOOLS: list[str] = [

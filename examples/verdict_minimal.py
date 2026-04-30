@@ -1,11 +1,12 @@
-"""Minimal verdict example — il pattern d'uso "happy path" di Sophia Motor.
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
+"""Minimal verdict example — the canonical happy path for sophia-motor.
 
-Stesso `motor` istanziato UNA volta a livello modulo, riusato per N task
-che variano solo per il `prompt`. Lazy auto-start del proxy al primo run
-(niente `async with`, niente lifecycle ceremony).
+A single `motor` is instantiated ONCE at module level and reused for N
+tasks that differ only in the `prompt`. The proxy lazy-auto-starts on
+the first `motor.run()` (no `async with`, no lifecycle ceremony).
 
-Lancia:
-  cd /home/mwspace/htdocs/sophia-motor
+Run:
   ANTHROPIC_API_KEY=sk-ant-... .venv/bin/python examples/verdict_minimal.py
 """
 from __future__ import annotations
@@ -18,40 +19,41 @@ from pydantic import BaseModel, Field
 from sophia_motor import Motor, MotorConfig, RunTask
 
 
-# ── 1) Schema dell'output (Pydantic). Qualunque BaseModel valido. ────────
+# ── 1) Output schema (any Pydantic BaseModel works). ────────────────────
 class Verdict(BaseModel):
-    verdetto: Literal["ALTA", "MEDIA", "BASSA"]
-    motivazione: str = Field(min_length=20)
-    sub_req_coperti: list[str]
-    sub_req_non_coperti: list[str]
+    coverage: Literal["HIGH", "MEDIUM", "LOW"]
+    rationale: str = Field(min_length=20)
+    sub_requirements_covered: list[str]
+    sub_requirements_uncovered: list[str]
 
 
-# ── 2) Istanzia Motor UNA volta a livello modulo, con i default comuni.
-#    Il dev può usarlo da qualunque async function del progetto.
-#    Niente `async with`: il proxy parte alla prima `motor.run()`.
+# ── 2) Instantiate Motor ONCE at module level with shared defaults.
+#    Any async function in the project can reuse it.
+#    No `async with`: the proxy starts on the first `motor.run()`.
 motor = Motor(MotorConfig(
-    default_system="Sei un compliance officer di una banca italiana.",
+    default_system="You are a compliance officer evaluating control coverage.",
     default_output_schema=Verdict,
-    default_tools=[],            # puro reasoning, no tool a default
+    default_tools=[],            # pure reasoning, no tools by default
     default_allowed_tools=[],
     default_max_turns=5,
 ))
 
 
-# ── 3) Una "funzione intelligente" è una normale async def Python che
-#    costruisce un RunTask col solo campo che varia (qui: il prompt).
+# ── 3) A "smart function" is a normal Python async def that builds a
+#    RunTask filling in only the parts that vary (here: the prompt).
 async def assess_obligation(obligation_text: str, controls: list[str]) -> Verdict:
-    """Valuta la copertura di un obbligo dato un set di controlli candidati."""
+    """Evaluate whether an obligation is covered by a set of candidate controls."""
     task = RunTask(
         prompt=(
-            f"Valuta se l'obbligo è coperto dai controlli candidati.\n"
-            f"Decomponi in sub-requirement, cita verbatim, produci verdetto.\n\n"
-            f"OBBLIGO:\n{obligation_text}\n\n"
-            f"CONTROLLI CANDIDATI:\n"
+            f"Evaluate whether the obligation is covered by the candidate "
+            f"controls. Decompose into sub-requirements, quote verbatim, "
+            f"produce a coverage verdict.\n\n"
+            f"OBLIGATION:\n{obligation_text}\n\n"
+            f"CANDIDATE CONTROLS:\n"
             + "\n".join(f"- {c}" for c in controls)
         ),
-        # niente system/tools/output_schema/max_turns: vengono dai default
-        # del MotorConfig sopra. Si potrebbero override qui per il singolo task.
+        # No system/tools/output_schema/max_turns here — taken from
+        # MotorConfig defaults above. Override per-task if needed.
     )
     result = await motor.run(task)
     if result.metadata.is_error:
@@ -60,38 +62,39 @@ async def assess_obligation(obligation_text: str, controls: list[str]) -> Verdic
 
 
 async def main() -> None:
-    # Prima chiamata: il proxy si avvia trasparente (~500ms una volta sola).
+    # First call: the proxy boots transparently (~500ms, one time).
     v1 = await assess_obligation(
         obligation_text=(
-            "L'organo di controllo verifica entro 30 giorni dalla pubblicazione "
-            "il superamento dei tassi soglia ai sensi della legge 108/1996."
+            "The control body must verify, within 30 days of publication, "
+            "any breach of the regulatory threshold rates."
         ),
         controls=[
-            "CTRL-001: Verifica trimestrale dei tassi soglia (Risk Mgmt)",
-            "CTRL-042: Audit annuale di conformità (Internal Audit)",
+            "CTRL-001: Quarterly threshold-rate verification (Risk Mgmt)",
+            "CTRL-042: Annual compliance audit (Internal Audit)",
         ],
     )
     print(f"=== Verdict 1 ===")
-    print(f"  verdetto    : {v1.verdetto}")
-    print(f"  motivazione : {v1.motivazione}")
-    print(f"  coperti     : {v1.sub_req_coperti}")
-    print(f"  non coperti : {v1.sub_req_non_coperti}")
+    print(f"  coverage      : {v1.coverage}")
+    print(f"  rationale     : {v1.rationale}")
+    print(f"  covered       : {v1.sub_requirements_covered}")
+    print(f"  not covered   : {v1.sub_requirements_uncovered}")
 
-    # Seconda chiamata: proxy già vivo, dispatch immediato.
+    # Second call: proxy already alive, dispatch is immediate.
     v2 = await assess_obligation(
         obligation_text=(
-            "La banca pubblica trimestralmente i tassi soglia sul proprio sito web."
+            "The bank must publish threshold rates on its public website "
+            "on a quarterly basis."
         ),
         controls=[
-            "CTRL-100: Pubblicazione mensile su intranet",
+            "CTRL-100: Monthly publication on the internal intranet",
         ],
     )
     print(f"\n=== Verdict 2 ===")
-    print(f"  verdetto    : {v2.verdetto}")
-    print(f"  motivazione : {v2.motivazione}")
+    print(f"  coverage      : {v2.coverage}")
+    print(f"  rationale     : {v2.rationale}")
 
-    # Cleanup esplicito a fine app — opzionale: il proxy muore comunque
-    # quando il processo Python termina.
+    # Optional explicit cleanup — the proxy dies anyway when the Python
+    # process terminates.
     await motor.stop()
 
 

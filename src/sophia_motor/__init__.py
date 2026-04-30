@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """sophia-motor — instanceable agent motor wrapping Claude Agent SDK.
 
 Public API:

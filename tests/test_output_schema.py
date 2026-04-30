@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Output schema strict — Pydantic-validated structured_output via --json-schema.
 
 Two live tests exercise the full agentic loop:
@@ -12,16 +14,14 @@ verify the wiring without an API call.
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import Literal
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sophia_motor import Motor, MotorConfig, RunTask  # noqa: E402
+from sophia_motor import Motor, MotorConfig, RunTask
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -79,9 +79,9 @@ def api_key() -> str:
 
 
 class Verdict(BaseModel):
-    verdetto: Literal["CHIARO", "AMBIGUO"]
-    motivo: str = Field(min_length=10)
-    punteggio: float = Field(ge=0, le=1)
+    classification: Literal["CLEAR", "AMBIGUOUS"]
+    rationale: str = Field(min_length=10)
+    score: float = Field(ge=0, le=1)
 
 
 async def test_simple_verdict_schema(api_key: str, tmp_path: Path) -> None:
@@ -91,8 +91,8 @@ async def test_simple_verdict_schema(api_key: str, tmp_path: Path) -> None:
     async with Motor(config) as motor:
         result = await motor.run(RunTask(
             prompt=(
-                "Valuta se questo requisito è chiaro o ambiguo: "
-                "'la banca pubblica i tassi soglia trimestralmente'."
+                "Classify whether this requirement is clear or ambiguous: "
+                "'the bank publishes threshold rates on a quarterly basis'."
             ),
             tools=[],  # no tools — pure classification
             allowed_tools=[],
@@ -104,18 +104,18 @@ async def test_simple_verdict_schema(api_key: str, tmp_path: Path) -> None:
     )
     assert result.output_data is not None, "structured_output not validated"
     assert isinstance(result.output_data, Verdict)
-    assert result.output_data.verdetto in {"CHIARO", "AMBIGUO"}
-    assert 0 <= result.output_data.punteggio <= 1
-    assert len(result.output_data.motivo) >= 10
+    assert result.output_data.classification in {"CLEAR", "AMBIGUOUS"}
+    assert 0 <= result.output_data.score <= 1
+    assert len(result.output_data.rationale) >= 10
 
 
-class ControlloMetadata(BaseModel):
+class ControlMetadata(BaseModel):
     """Schema for a multi-turn extraction task — agent must read a file."""
-    controllo_id: str = Field(pattern=r"^CTRL-\d{4}-\d{3}$")
-    tema: str
+    control_id: str = Field(pattern=r"^CTRL-\d{4}-\d{3}$")
+    topic: str
     owner: str
-    periodicita: Literal["mensile", "trimestrale", "annuale"]
-    normativa_citata: list[str]
+    frequency: Literal["monthly", "quarterly", "annual"]
+    cited_regulations: list[str]
 
 
 async def test_multi_turn_with_read_tool(api_key: str, tmp_path: Path) -> None:
@@ -123,32 +123,32 @@ async def test_multi_turn_with_read_tool(api_key: str, tmp_path: Path) -> None:
 
     Verifies that the agentic loop (multi-turn tool use + reasoning) and
     --json-schema (structured output validation) work TOGETHER in a
-    single run — the use case for RGCI agent-based verdict.
+    single run.
     """
     config = MotorConfig(api_key=api_key, workspace_root=tmp_path,
                          console_log_enabled=False)
     sample = (
-        "# Controllo CTRL-2026-042\n\n"
-        "**Tema**: monitoraggio del rischio di credito al consumo\n"
+        "# Control CTRL-2026-042\n\n"
+        "**Topic**: consumer-credit risk monitoring\n"
         "**Owner**: Risk Management\n"
-        "**Periodicità**: trimestrale\n"
-        "**Descrizione**: La banca verifica il superamento dei tassi "
-        "soglia ai sensi della legge 108/1996 attraverso il calcolo "
-        "del TEGM e l'invio del flusso di reporting all'organo di "
-        "vigilanza interno.\n"
+        "**Frequency**: quarterly\n"
+        "**Description**: The bank verifies any breach of regulatory "
+        "threshold rates pursuant to relevant consumer-credit law via "
+        "TEGM-style indicator calculation and forwarding of the reporting "
+        "flow to the internal supervisory body.\n"
     )
 
     async with Motor(config) as motor:
         result = await motor.run(RunTask(
             prompt=(
-                "Leggi attachments/controllo.md ed estrai i metadati "
-                "strutturati del controllo."
+                "Read attachments/control.md and extract the structured "
+                "metadata of the control."
             ),
             tools=["Read"],
             allowed_tools=["Read"],
-            attachments=[{"controllo.md": sample}],
+            attachments=[{"control.md": sample}],
             max_turns=8,
-            output_schema=ControlloMetadata,
+            output_schema=ControlMetadata,
         ))
 
     assert not result.metadata.is_error, (
@@ -161,10 +161,11 @@ async def test_multi_turn_with_read_tool(api_key: str, tmp_path: Path) -> None:
     assert result.metadata.n_turns >= 2
 
     assert result.output_data is not None
-    assert isinstance(result.output_data, ControlloMetadata)
+    assert isinstance(result.output_data, ControlMetadata)
     # Content fidelity — agent extracted the right values from the file
-    assert result.output_data.controllo_id == "CTRL-2026-042"
-    assert result.output_data.periodicita == "trimestrale"
+    assert result.output_data.control_id == "CTRL-2026-042"
+    assert result.output_data.frequency == "quarterly"
     assert any(
-        "108/1996" in ref for ref in result.output_data.normativa_citata
+        "consumer" in ref.lower() or "credit" in ref.lower()
+        for ref in result.output_data.cited_regulations
     )

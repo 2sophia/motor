@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Unit tests for proxy body transformations.
 
 These run without ANTHROPIC_API_KEY (no SDK call). They exercise the pure
@@ -5,12 +7,10 @@ helper functions that munge the request body before forwarding upstream.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sophia_motor.proxy import (  # noqa: E402
+from sophia_motor.proxy import (
     _rewrite_tool_descriptions,
     _strip_sdk_noise,
     _strip_user_system_reminders,

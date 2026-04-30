@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Built-in PreToolUse hook — sandbox the agent inside its workspace.
 
 Three modes (selected by `MotorConfig.guardrail`):
@@ -21,8 +23,6 @@ Three modes (selected by `MotorConfig.guardrail`):
 The hook returns `{}` to allow, or `{"decision": "block", "reason": "..."}`
 to refuse the tool call. The agent receives the reason as feedback and
 typically retries with a corrected approach.
-
-Adapted (and slimmed) from sophia-agent's `_guard_pre_tool`.
 """
 from __future__ import annotations
 

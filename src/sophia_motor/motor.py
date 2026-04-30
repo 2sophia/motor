@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Motor — instanceable agent engine.
 
 Class API:
@@ -388,10 +390,10 @@ class Motor:
     ) -> tuple[Path, Path, Path, Path, dict[str, str], dict[str, str]]:
         """Create workspace dirs and materialize attachments + skills.
 
-        Layout (sophia-agent pattern): CLAUDE_CONFIG_DIR is a SIBLING of
-        the SDK cwd, never a descendant. When `.claude/` lives inside the
-        cwd, the CLI mis-resolves session/projects paths and recreates the
-        workspace structure inside cwd as `./.runs/<RID>/agent_cwd/.claude/`
+        Layout: CLAUDE_CONFIG_DIR is a SIBLING of the SDK cwd, never a
+        descendant. When `.claude/` lives inside the cwd, the CLI
+        mis-resolves session/projects paths and recreates the workspace
+        structure inside cwd as `./.runs/<RID>/agent_cwd/.claude/`
         (verified empirically). Sibling layout avoids it.
 
             <run>/                  ← motor-owned root

@@ -1,13 +1,14 @@
-"""Test skill: 'say-hello' — verifica che skill linking funzioni end-to-end.
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
+"""Test skill: 'say-hello' — verifies that skill linking works end-to-end.
 
 Setup:
   - skill source: examples/skills_example/say_hello/SKILL.md
-  - il motor la linka in <run>/.claude/skills/say_hello/
-  - prompt: "invoca la skill say-hello sul mio task: <task>"
-  - atteso output: "CIAO ECO 👋\\n<sintesi>"
+  - the motor links it under <run>/.claude/skills/say_hello/
+  - prompt: "invoke the say-hello skill on my task: <task>"
+  - expected output: "HELLO WORLD 👋\\n<summary>"
 
-Lancia:
-  cd /home/mwspace/htdocs/sophia-motor
+Run:
   ANTHROPIC_API_KEY=... .venv/bin/python examples/skill_test.py
 """
 from __future__ import annotations
@@ -25,16 +26,16 @@ async def main() -> None:
     async with Motor(MotorConfig()) as motor:
         result = await motor.run(RunTask(
             prompt=(
-                "Invoca la skill `say-hello` sul mio task: "
-                "'leggi il file riassunto.md e prepara un report'."
+                "Invoke the `say-hello` skill on my task: "
+                "'read the file summary.md and prepare a report'."
             ),
             system=(
                 "You can invoke skills via the Skill tool. The 'say-hello' "
                 "skill is available — use it for greeting tasks."
             ),
-            tools=["Skill"],          # solo Skill — nient'altro
+            tools=["Skill"],
             allowed_tools=["Skill"],
-            skills=SKILLS_DIR,        # link la folder skill source
+            skills=SKILLS_DIR,
             max_turns=5,
         ))
 
@@ -48,11 +49,11 @@ async def main() -> None:
     print("=" * 60)
     print(f"\nOUTPUT\n{result.output_text or '(empty)'}\n")
     print("=" * 60)
-    print("Verifiche:")
-    starts_ok = (result.output_text or "").lstrip().startswith("CIAO ECO")
-    print(f"  output starts with 'CIAO ECO'?  {'✓' if starts_ok else '✗'}")
+    print("Checks:")
+    starts_ok = (result.output_text or "").lstrip().startswith("HELLO WORLD")
+    print(f"  output starts with 'HELLO WORLD'?  {'✓' if starts_ok else '✗'}")
     print(f"  audit dir: {result.audit_dir}")
-    print(f"  skill linkata: {result.workspace_dir / '.claude' / 'skills' / 'say_hello'}")
+    print(f"  linked skill: {result.workspace_dir / '.claude' / 'skills' / 'say_hello'}")
 
 
 if __name__ == "__main__":

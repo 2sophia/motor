@@ -1,17 +1,17 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Pre-flight + materialization tests for `RunTask.skills`.
 
 No SDK call. Exercises `_validate_skills` and `_materialize_skills`.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sophia_motor.motor import (  # noqa: E402
+from sophia_motor.motor import (
     _materialize_skills,
     _validate_skills,
 )

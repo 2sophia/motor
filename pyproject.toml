@@ -57,3 +57,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Resolve `import sophia_motor` from the src/ layout without requiring an
+# editable install. Editable install (`pip install -e ".[dev]"`) is still
+# the recommended dev workflow — this just makes a one-shot `pytest` work
+# in fresh checkouts and on CI runners that skip install.
+pythonpath = ["src"]

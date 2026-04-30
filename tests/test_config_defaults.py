@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """MotorConfig defaults + per-RunTask override semantics.
 
 The pattern: the dev configures common settings (system prompt, tools,
@@ -10,15 +12,13 @@ Override semantics: full replacement, never merge.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sophia_motor import Motor, MotorConfig, RunTask  # noqa: E402
+from sophia_motor import Motor, MotorConfig, RunTask
 
 
 class _Out(BaseModel):

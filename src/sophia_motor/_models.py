@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Sophia AI
+# SPDX-License-Identifier: MIT
 """Input/output dataclasses for `Motor.run`."""
 from __future__ import annotations
 
@@ -9,52 +11,53 @@ from pydantic import BaseModel
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# attachments — polimorfo
+# attachments — polymorphic input
 #
-# Accetta singolo o lista. Forme valide (mix libero in lista):
+# Accepts a single value or a list. Valid forms (free mix in a list):
 #
-#   1. str | Path  →  file reale  → symlink in <run>/attachments/<name>
-#   2. str | Path  →  directory   → symlink in <run>/attachments/<name>/
-#   3. dict[str, str]  →  inline  → file scritto in <run>/attachments/<relpath>
+#   1. str | Path  →  real file       → symlink in <run>/attachments/<name>
+#   2. str | Path  →  real directory  → symlink in <run>/attachments/<name>/
+#   3. dict[str, str]  →  inline      → file written to <run>/attachments/<relpath>
 #
-# Default: SYMLINK per Path (no copy, no storage waste, no duplicazione).
-# L'audit BdI passa per gli SSE in <run>/audit/, non per il filesystem in
-# attachments/. Un symlink che cambia dopo non rompe la difesa: il dump
-# dei tool_result registra il TESTO che il modello ha letto, non i bytes
-# correnti del file.
+# Default: SYMLINK for Path entries (no copy, no storage waste, no
+# duplication). The audit trail goes through the SSE dump in <run>/audit/,
+# not through the filesystem under attachments/. A symlink that mutates
+# afterwards does not weaken the defense: the dumped tool_result records
+# the TEXT the model read, not the current bytes on disk.
 #
-# Sandbox escape (link malevoli a /etc/passwd ecc.): trust nel dev. Per
-# applicazioni con utenti finali untrusted, sopra il motor va messo un
-# guard PreToolUse layer (pattern sophia).
+# Sandbox escape (malicious links to /etc/passwd etc.): trusted-dev
+# assumption. For applications exposing untrusted end-users, layer a
+# PreToolUse guard above the motor (see `guard.py`).
 #
-# Pre-flight check prima di consumare token:
-#   - path mancante → FileNotFoundError
-#   - non file né dir → ValueError
-#   - non leggibile → PermissionError
-#   - dict key absolute o con `..` → ValueError
-#   - dict value non-str → TypeError
-#   - due item che destinano allo stesso path → ValueError (conflitto)
+# Pre-flight checks before tokens are spent:
+#   - missing path → FileNotFoundError
+#   - not a file or directory → ValueError
+#   - unreadable → PermissionError
+#   - dict key absolute or containing `..` → ValueError
+#   - dict value not a str → TypeError
+#   - two items resolving to the same path → ValueError (conflict)
 # ─────────────────────────────────────────────────────────────────────────
 AttachmentItem = Union[str, Path, dict[str, str]]
 AttachmentsInput = Union[AttachmentItem, list[AttachmentItem], None]
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# skills — folder source delle SKILL.md del programma
+# skills — source folder(s) holding the program's SKILL.md files
 #
-# Accetta singolo o lista (il dev può avere skill in più dir, es. una del
-# programma e una shared org-wide). Per ogni dir source il motor:
-#   - itera le sue subdir
-#   - tra quelle che hanno un SKILL.md e che non sono in disallowed_skills
-#   - crea un symlink <run>/.claude/skills/<skill_name> → <source>/<skill_name>
+# Accepts a single value or a list (the dev may have skills in multiple
+# folders, e.g. one program-specific and one shared org-wide). For each
+# source folder the motor:
+#   - iterates its subdirectories
+#   - among those with a SKILL.md and not in disallowed_skills
+#   - creates a symlink <run>/.claude/skills/<skill_name> → <source>/<skill_name>
 #
-# Conflict detection: se due dir source forniscono una skill con lo stesso
-# nome → ValueError chiaro. Il dev rinomina una delle due o usa disallowed.
+# Conflict detection: if two source folders provide a skill with the same
+# name → clear ValueError. The dev renames one or uses disallowed_skills.
 #
-# Pre-flight check:
-#   - skills path manacante → FileNotFoundError
-#   - path non è una dir → ValueError
-#   - conflict di nome tra source → ValueError
+# Pre-flight checks:
+#   - missing skills path → FileNotFoundError
+#   - path is not a directory → ValueError
+#   - name conflict across sources → ValueError
 # ─────────────────────────────────────────────────────────────────────────
 SkillsInput = Union[str, Path, list[Union[str, Path]], None]
 
@@ -83,10 +86,10 @@ class RunTask:
     disallowed_tools: Optional[list[str]] = None
     max_turns: Optional[int] = None
 
-    # input data — singolo Path | str | dict, oppure lista mista
+    # input data — single Path | str | dict, or a mixed list
     attachments: AttachmentsInput = None
 
-    # codice/strumenti — singolo Path | str, oppure lista
+    # code/tooling — single Path | str, or a list
     skills: SkillsInput = None
     disallowed_skills: list[str] = field(default_factory=list)
 
