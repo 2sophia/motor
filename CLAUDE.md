@@ -161,6 +161,7 @@ RunTask(
 | `api_key` | da `ANTHROPIC_API_KEY` env | obbligatorio per chiamate vere |
 | `workspace_root` | `~/.sophia-motor/runs/` | **MUST be outside any repo** — vedi sezione "CLI quirks" |
 | `disable_claude_md` | `True` | inibisce auto-load di Project/Local CLAUDE.md (env `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`) |
+| `guardrail` | `"strict"` | PreToolUse hook builtin: `"strict"` (default, safe-by-default) / `"permissive"` (solo escape patterns + sudo + exfil) / `"off"`. Vedi `src/sophia_motor/guard.py`. |
 | `proxy_enabled` | `True` | NON disabilitare in produzione |
 | `proxy_dump_payloads` | `True` | richiesto per BdI defense |
 | `proxy_strip_sdk_noise` | `True` | risparmia token su ogni request |
@@ -233,6 +234,41 @@ Tentazione: passare `--bare` per output minimal. **NON FARLO**. In bare mode le 
 ### Quirk 5 — `setting_sources` deve essere `["project"]`
 
 Provato `["local"]` → il CLI smette di trovare le skill linkate in `<config_dir>/skills/`. `["project"]` è l'unica scelta che fa funzionare la skill discovery via CLAUDE_CONFIG_DIR.
+
+## Security model — guardrail builtin
+
+Un `PreToolUse` hook live nello stesso processo del Motor (vedi
+`src/sophia_motor/guard.py`). Triage adattato dal `_guard_pre_tool` di
+sophia-agent ma con scope ridotto (no `user_root` concept — qui esiste
+solo `cwd = <run>/agent_cwd/`).
+
+**Cosa fa il guard:**
+
+| Tool | strict | permissive | off |
+|---|---|---|---|
+| `Read` / `Edit` | path resolved deve essere sotto cwd (anti-symlink-escape) | (no check) | (no check) |
+| `Glob` / `Grep` | path parameter sotto cwd | (no check) | (no check) |
+| `Write` | solo `outputs/` (anti-symlink-escape) | (no check) | (no check) |
+| `Bash` | blocklist dev/admin (curl, wget, ssh, git, docker, pip, npm, sudo, chmod, ...) + `..` + `/dev/tcp` + `bash -c` + `eval`/`exec`/`source` | sudo + exfil curl/wget --data + `/dev/tcp` + `..` + destructive commands (rm -rf root, dd, mkfs, ...) | nessun controllo |
+
+**Cosa NON fa (TODO future):**
+
+- Rate limit per-tool / per-run
+- Content filter su prompts (PII, prompt injection)
+- Per-run filesystem sandbox managed (chroot / unshare / overlayfs)
+- Sandboxed Bash con allowlist-only (oggi: blocklist)
+- Guard sul valore dei tool output (es. tool result che contengono path
+  fuori cwd → blocco al ritorno)
+
+**Quando il guard rifiuta**, ritorna `{"decision": "block", "reason": "..."}`.
+Il SDK passa la `reason` al modello come system feedback. Verificato live:
+prompt "leggi /etc/passwd" → guard blocca → modello dice "sono sandboxed,
+non posso accedere".
+
+**Custom hook**: se il dev vuole estendere, oggi non c'è un'API per
+sovrapporre hook custom — bisogna disabilitare il builtin (`guardrail="off"`)
+e passare il proprio via patching `_build_sdk_options`. Da formalizzare
+in futuro come `MotorConfig.custom_pre_tool_hook` field.
 
 ## Comandi
 

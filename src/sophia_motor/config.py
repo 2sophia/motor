@@ -191,6 +191,26 @@ class MotorConfig(BaseModel):
         ),
     )
 
+    # ── Security guardrail (PreToolUse hook) ─────────────────────────
+    guardrail: str = Field(
+        default="strict",
+        description=(
+            "Built-in PreToolUse hook that sandboxes the agent inside its "
+            "workspace. Three modes:\n\n"
+            "  - 'strict' (default): Read/Edit/Glob/Grep must stay inside "
+            "cwd; Write must target outputs/; Bash blocks dev/admin commands "
+            "(curl, wget, ssh, git, docker, pip, npm, sudo, chmod, ...) "
+            "plus '..' escapes, /dev/tcp, bash -c, eval/exec patterns.\n"
+            "  - 'permissive': only sane minimums — '..' escapes, sudo, "
+            "rm -rf root, exfiltration via curl/wget --data, /dev/tcp.\n"
+            "  - 'off': no hook (full SDK behaviour). Use only when you "
+            "fully trust prompts AND host (e.g. ephemeral container).\n\n"
+            "Default 'strict' is safe-by-default for prototypes, internal "
+            "tools, web-form prompts. Set 'permissive' if the agent "
+            "legitimately needs git/docker/package managers."
+        ),
+    )
+
     # ── Skip ambient context (CLAUDE.md / memory) ────────────────────
     disable_claude_md: bool = Field(
         default=True,

@@ -13,7 +13,7 @@
 
 </div>
 
-> ⚠️ **Alpha software.** Sophia Motor lets the agent execute tools (`Read`, `Skill`, optionally more) on the host where it runs. The audit dump and guardrails are in active development. **Do not point it at production data, untrusted user input, or systems you wouldn't want a curious agent to poke around in** — at least not without your own sandboxing layer on top. Useful for prototyping, internal tools, dev workflows. Production-ready hardening (sandboxed FS, guard hooks, rate limits, content filters) coming in upcoming releases.
+> ⚠️ **Alpha software.** A built-in `strict` guardrail is **on by default** — the agent's `Read`/`Edit`/`Glob`/`Grep` are confined to the workspace, `Write` is restricted to `outputs/`, and `Bash` blocks dev/admin commands (`curl`, `wget`, `ssh`, `git`, `docker`, `pip`, `npm`, `sudo`, ...) plus `..` escapes, `/dev/tcp`, `bash -c`, `eval`/`exec` patterns. This is the **first layer**, not the last. Audit dump, rate limits, content filtering, and a managed-sandbox runtime are in active development. **Don't point it at production secrets or fully untrusted prompts without your own hardening on top** — yet.
 
 ---
 
@@ -249,6 +249,22 @@ For parallel work: instantiate N motors.
 m1, m2 = Motor(), Motor()
 a, b = await asyncio.gather(m1.run(task_a), m2.run(task_b))
 ```
+
+## Guardrail
+
+A `PreToolUse` hook is wired in by default. It runs **before** every tool call and refuses unsafe ones, returning the reason as feedback so the agent can self-correct.
+
+```python
+Motor(MotorConfig(guardrail="strict"))      # default — safe by default
+Motor(MotorConfig(guardrail="permissive"))  # blocks only sudo/exfil/escapes
+Motor(MotorConfig(guardrail="off"))         # no hook (you take responsibility)
+```
+
+| Mode | Read / Edit / Glob / Grep | Write | Bash |
+|---|---|---|---|
+| **strict** | must stay inside cwd | only `outputs/` | dev/admin commands blocked (`curl`, `git`, `docker`, `pip`, `npm`, `sudo`, ...) + `..` / `/dev/tcp` / `bash -c` / `eval` |
+| **permissive** | unrestricted | unrestricted | only `sudo`, exfiltration patterns, `/dev/tcp`, `..` escapes, destructive commands |
+| **off** | unrestricted | unrestricted | unrestricted |
 
 ---
 

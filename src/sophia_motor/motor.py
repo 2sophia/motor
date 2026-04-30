@@ -43,10 +43,12 @@ from claude_agent_sdk import (
     ToolUseBlock,
     UserMessage,
 )
+from claude_agent_sdk.types import HookMatcher
 
 from ._models import RunMetadata, RunResult, RunTask
 from .cleanup import clean_runs as _clean_runs_helper
 from .config import MotorConfig
+from .guard import make_guard_hook
 from .events import (
     Event,
     EventBus,
@@ -609,6 +611,16 @@ class Motor:
         }
         if task.tools is not None:
             sdk_kwargs["tools"] = task.tools
+
+        # Built-in PreToolUse hook — sandbox the agent based on config.guardrail.
+        # The hook matches on every tool name (matcher=None catches all) and
+        # delegates the per-tool checks to make_guard_hook. Setting
+        # guardrail='off' returns None and we skip the hooks block entirely.
+        guard_hook = make_guard_hook(self.config.guardrail)  # type: ignore[arg-type]
+        if guard_hook is not None:
+            sdk_kwargs["hooks"] = {
+                "PreToolUse": [HookMatcher(hooks=[guard_hook])],
+            }
 
         # extra_args: arbitrary CLI flags forwarded to the Claude Code CLI
         # subprocess. We use it to pass --bare and --no-session-persistence
