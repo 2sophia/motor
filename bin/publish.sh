@@ -6,8 +6,14 @@
 #   bin/publish.sh testpypi     # upload to test.pypi.org sandbox
 #   bin/publish.sh pypi         # upload to real pypi.org (PROD)
 #
-# Token resolution: env var TWINE_PASSWORD wins.
-#                   Fallback: $HOME/.pypirc (twine reads it natively).
+# Token resolution (in order, first hit wins):
+#   1. shell env: TWINE_USERNAME / TWINE_PASSWORD
+#   2. ./.env file (sourced automatically — gitignored)
+#   3. ~/.pypirc  (twine reads it natively)
+#
+# Drop these two lines into ./.env (file already in .gitignore):
+#   TWINE_USERNAME=__token__
+#   TWINE_PASSWORD=pypi-AgEIcHlwaS5vcmcCJ...
 #
 # Safety rails — refuses to upload if:
 #   - the working tree is dirty (git status not clean)
@@ -18,6 +24,14 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+
+# Load credentials from .env if present (set -a auto-exports each var)
+if [[ -f .env ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source .env
+    set +a
+fi
 
 PY="${PY:-$REPO_ROOT/.venv/bin/python}"
 MODE="${1:-check}"
