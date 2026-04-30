@@ -84,18 +84,23 @@ Ogni `motor.run(task)` crea:
 ```
 <workspace_root>/<run_id>/
   input.json           # parametri input + config snapshot + manifest attachments+skills
-  attachments/         # symlink ai Path passati + file inline scritti
-  .claude/
-    skills/            # symlink alle skill abilitate (multi-source supported)
-  outputs/             # file generati dall'agent (Write tool va qui)
+  trace.json           # blocks finali + metadata
   audit/
     request_001.json   # body POST /v1/messages
     response_001.sse   # response stream (.sse) o .json (sync)
     ...
-  trace.json           # blocks finali + metadata
+  .claude/             # CLAUDE_CONFIG_DIR — sibling di agent_cwd, non child
+    plugins/           # stub installed_plugins.json (no plugin loading)
+    skills/            # symlink alle skill abilitate (multi-source supported)
+    backups/, sessions/   # state CLI (auto)
+  agent_cwd/           # cwd del subprocess (sandbox)
+    attachments/       # symlink ai Path passati + file inline scritti
+    outputs/           # file generati dall'agent (Write tool va qui)
 ```
 
 `run_id = run-<timestamp>-<8 hex>`. Workspace persistente — non viene cancellato a fine run (è il file system di audit). Per cleanup: `motor.clean_runs(...)` o `clean_runs(workspace_root, ...)`.
+
+**Why two levels (root + agent_cwd):** il root è motor-owned (audit, trace, input, .claude config). `agent_cwd/` è la **sandbox** del subprocess CLI: l'agent vede solo `attachments/` e `outputs/`, mai `audit/` o `.claude/` interno. Layout BdI-grade: l'auditor leggendo il root capisce subito cosa è motor vs cosa è agent.
 
 ### Attachments — singolo o lista, link by default
 
@@ -154,13 +159,71 @@ RunTask(
 | `model` | `claude-opus-4-6` | scelto da Alex il 2026-04-30 — Opus 4.6 è il modello compliance di riferimento |
 | `upstream_base_url` | `https://api.anthropic.com` | il proxy forwarda qui |
 | `api_key` | da `ANTHROPIC_API_KEY` env | obbligatorio per chiamate vere |
-| `workspace_root` | `./.runs` | risolto absolute in __init__ |
+| `workspace_root` | `~/.sophia-motor/runs/` | **MUST be outside any repo** — vedi sezione "CLI quirks" |
+| `disable_claude_md` | `True` | inibisce auto-load di Project/Local CLAUDE.md (env `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`) |
 | `proxy_enabled` | `True` | NON disabilitare in produzione |
 | `proxy_dump_payloads` | `True` | richiesto per BdI defense |
 | `proxy_strip_sdk_noise` | `True` | risparmia token su ogni request |
+| `proxy_strip_user_system_reminders` | `True` | strip `<system-reminder>` dai messaggi user dal turn 2 |
 | `console_log_enabled` | `True` | colorato, opt-out per silence |
 | `default_max_turns` | `20` | hard cap, override per RunTask |
 | `default_timeout_seconds` | `300` | non ancora wired in run() |
+| `cli_no_session_persistence` | `True` | passa `--no-session-persistence` al CLI |
+
+## CLI quirks — cose imparate empiricamente
+
+Il binary del Claude Agent SDK (`.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude`, bun-bundled, opaco) ha comportamenti non documentati che il motor neutralizza.
+
+### Quirk 1 — Project root upward discovery
+
+Il CLI sale dalla cwd cercando marker (`.git/`, `pyproject.toml`, `package.json`). Se ne trova uno upward, **rewrita le path di session/backup** in un fallback path nidificato `<cwd>/<rel-to-discovered-root>/.claude/{backups,sessions}` invece di usare `CLAUDE_CONFIG_DIR`. Verificato empiricamente:
+
+- Workspace `/home/mwspace/htdocs/sophia-motor/.runs/<RID>/agent_cwd/` (dentro repo) → nidificazione `agent_cwd/.runs/<RID>/agent_cwd/.claude/...` ❌
+- Workspace `/tmp/sophia-motor-test/<RID>/agent_cwd/` (no marker upward) → CLI scrive in `<run>/.claude/` come previsto ✓
+
+Tentativi di override **falliti** (testati):
+- `CLAUDE_PROJECT_DIR=<agent_cwd>` env var
+- `git init` in `agent_cwd/`
+- File `.git` (vuoto) in `<run>/`
+- `.git/` directory minima in `<run>/`
+- Nome workspace senza dot-prefix (`runs/` vs `.runs/`)
+
+**Unico fix affidabile**: `workspace_root` deve avere ancestor "puliti" (senza `.git/`, `pyproject.toml`, `package.json`). Default `~/.sophia-motor/runs/` è sempre safe. In container: passa `MotorConfig(workspace_root="/data/runs")` con volume montato.
+
+### Quirk 2 — CLAUDE_CONFIG_DIR ignorato senza pre-seed
+
+Il CLI ignora `CLAUDE_CONFIG_DIR` env se `<config_dir>/plugins/installed_plugins.json` non esiste. Il motor pre-crea quel file in `_seed_claude_config_dir`. Senza il seed, il CLI fa fallback alla path autoderivata (vedi quirk 1).
+
+### Quirk 3 — Env vars di disable native
+
+Il binary risponde a una decina di env var che disabilitano comportamenti default (telemetry, title-gen, auto-memory, file checkpointing, ecc.). Il motor le imposta tutte:
+
+| Env var | Effetto |
+|---|---|
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | telemetry, title-generation, onboarding-prompt |
+| `CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING` | non scrive `projects/<encoded-cwd>/<session>.jsonl` |
+| `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | no sub-spawn |
+| `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | no auto-memory feature |
+| `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY` | no survey |
+| `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` | no terminal title rewrite |
+| `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS` | no auto-suggerimenti git (commit, branch, ecc.) |
+| `CLAUDE_CODE_DISABLE_CLAUDE_MDS` | no auto-load Project/Local CLAUDE.md (gated da `disable_claude_md`) |
+| `DISABLE_TELEMETRY`, `_ERROR_REPORTING`, `_AUTOUPDATER`, `_AUTO_COMPACT`, `_BUG_COMMAND` | generic anti-noise |
+| `ENABLE_TOOL_SEARCH=false` | tutti i tool caricati upfront, no deferred ToolSearch dance |
+
+Effetto cumulativo (verificato):
+- Cost test skill say-hello: $0.0187 → $0.0162 (-14%)
+- Durata: 8.0s → 5.8s (-27%)
+- 1 HTTP request risparmiato (warm-up sparito)
+- Niente `projects/` nidificato
+
+### Quirk 4 — `--bare` rompe le skill
+
+Tentazione: passare `--bare` per output minimal. **NON FARLO**. In bare mode le skill diventano slash-command (`/skill-name`) invece di Skill tool, e il modello smette di invocarle via tool_use. Output diventa una stringa letterale `<tool_call>...`. Default `cli_bare_mode=False`, on solo per casi senza skill.
+
+### Quirk 5 — `setting_sources` deve essere `["project"]`
+
+Provato `["local"]` → il CLI smette di trovare le skill linkate in `<config_dir>/skills/`. `["project"]` è l'unica scelta che fa funzionare la skill discovery via CLAUDE_CONFIG_DIR.
 
 ## Comandi
 
@@ -298,15 +361,17 @@ async with Motor(config) as motor:
 
 ## Cosa NON c'è ancora (roadmap)
 
-Stato: **PoC Fase 0 verificato sul lifecycle proxy**. Cosa manca per Fase 1 → ProgramRun strutturato:
+Stato: **PoC Fase 0 + 1a verificato** (lifecycle proxy + run end-to-end Opus 4.6 + skill linking + audit dump). Cosa manca per Fase 1 completa → ProgramRun strutturato:
 
-- [ ] **Run end-to-end con Opus reale** (serve `ANTHROPIC_API_KEY`)
+- [x] ~~Run end-to-end con Opus reale~~ — verificato 2026-04-30, skill `say-hello` end-to-end
+- [x] ~~Tool whitelist semantics~~ — `tools=` hard, `allowed_tools=` permission, `disallowed_tools=` block
+- [x] ~~CLI subprocess hardening~~ — env disable + quirks doc (vedi sezione "CLI quirks")
+- [ ] **Output schema strict** (JSON mode forzato via `--json-schema` flag native + Pydantic validation + retry self-correcting)
 - [ ] **`AgentProgram` dichiarativo** (system_prompt + allowed_tools + output_schema Pydantic + max_turns + budget)
   - `motor.run_program(program, inputs)` → output Pydantic-conforming
 - [ ] **Custom tool / skill catalog** (pattern delle skill Sophia: SKILL.md + scripts/)
   - Prima skill: `read_obligation` come riferimento
-- [ ] **Output schema strict** (JSON mode forzato + retry + fallback deterministico)
-- [ ] **Cost budget enforcement** (config + circuit breaker)
+- [ ] **Cost budget enforcement** (config + circuit breaker, env `--max-budget-usd` native)
 - [ ] **Prompt cache marker** (`cache_control: ephemeral` sul system prompt)
 - [ ] **Schema preflight** (proxy blocca tool fuori catalogo del programma)
 - [ ] **Drift detector** (cron — ri-esegue 5 verdict gold, alert se differisce)
@@ -326,6 +391,20 @@ Stato: **PoC Fase 0 verificato sul lifecycle proxy**. Cosa manca per Fase 1 → 
 - **Niente summary lunghi** a fine turn — 1-2 frasi *"fatto X e Y, prossimo?"*
 - **Test passo passo** prima di nuove decisioni — non build big bang
 - **Root cause > workaround**, sempre
+
+### ⚠️ Workspace personale — NON CANCELLARE
+
+Alex tiene file di lavoro in `~/.sophia-motor/`. Quando devi pulire i runs:
+
+```bash
+# OK ✓ — pulisci solo i runs
+rm -rf ~/.sophia-motor/runs/*
+
+# NO ❌ — cancella tutto incluso ciò che Alex tiene lì
+rm -rf ~/.sophia-motor
+```
+
+In codice: `motor.clean_runs()` o `clean_runs(workspace_root, ...)` — entrambi lavorano dentro `runs/`, mai sopra.
 
 ## Provenienza dei pattern
 

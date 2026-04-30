@@ -353,32 +353,38 @@ class Motor:
     ) -> tuple[Path, Path, Path, Path, dict[str, str], dict[str, str]]:
         """Create workspace dirs and materialize attachments + skills.
 
-        Layout: the SDK CLI subprocess gets cwd=<workspace>/agent_cwd/, so
-        any side-effect it writes (session.jsonl backups, .claude state) is
-        confined inside agent_cwd/ instead of polluting the run root with
-        nested .runs/ artifacts.
+        Layout (sophia-agent pattern): CLAUDE_CONFIG_DIR is a SIBLING of
+        the SDK cwd, never a descendant. When `.claude/` lives inside the
+        cwd, the CLI mis-resolves session/projects paths and recreates the
+        workspace structure inside cwd as `./.runs/<RID>/agent_cwd/.claude/`
+        (verified empirically). Sibling layout avoids it.
 
-            <run>/
-              input.json, trace.json, audit/        ← motor-owned
-              agent_cwd/                            ← SDK cwd
-                attachments/                        ← link/inline
-                .claude/                            ← skills + SDK state
-                  skills/                           ← link to source
-                outputs/                            ← agent Write target
+            <run>/                  ← motor-owned root
+              input.json, trace.json, audit/
+              .claude/              ← CLAUDE_CONFIG_DIR (sibling of agent_cwd)
+                skills/             ← link to source
+              agent_cwd/            ← SDK cwd (agent sandbox)
+                attachments/        ← link/inline
+                outputs/            ← agent Write target
 
         Returns (workspace_dir, agent_cwd, audit_dir, claude_dir,
         attachments_manifest, skills_manifest).
         """
         workspace_dir = self.config.workspace_root / run_id
         audit_dir = workspace_dir / "audit"
+        claude_dir = workspace_dir / ".claude"
+        skills_dir = claude_dir / "skills"
+        plugins_dir = claude_dir / "plugins"
         agent_cwd = workspace_dir / "agent_cwd"
         attachments_dir = agent_cwd / "attachments"
         outputs_dir = agent_cwd / "outputs"
-        claude_dir = agent_cwd / ".claude"
-        skills_dir = claude_dir / "skills"
         for d in (workspace_dir, audit_dir, agent_cwd, attachments_dir,
-                  outputs_dir, claude_dir, skills_dir):
+                  outputs_dir, claude_dir, skills_dir, plugins_dir):
             d.mkdir(parents=True, exist_ok=True)
+
+        # Pre-seed CLAUDE_CONFIG_DIR with an empty plugins manifest so the
+        # CLI doesn't try to load anything from disk on startup.
+        self._seed_claude_config_dir(claude_dir, plugins_dir)
 
         attachments_manifest = _materialize_attachments(
             attachments_dir, attachments_items,
@@ -394,6 +400,18 @@ class Motor:
             attachments_manifest,
             skills_manifest,
         )
+
+    def _seed_claude_config_dir(self, claude_dir: Path, plugins_dir: Path) -> None:
+        """Seed an empty plugins manifest so the CLI doesn't try to load
+        anything from disk on startup. CLAUDE.md auto-loading is gated by
+        the CLAUDE_CODE_DISABLE_CLAUDE_MDS env var (set in _build_sdk_options
+        when self.config.disable_claude_md is True), not by .config.json.
+        """
+        plugins_file = plugins_dir / "installed_plugins.json"
+        if not plugins_file.exists():
+            plugins_file.write_text(
+                '{"version": 2, "plugins": {}}', encoding="utf-8",
+            )
 
     def _persist_input(
         self,
@@ -473,7 +491,29 @@ class Motor:
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": self.config.model,
             # we want all tools loaded upfront, no deferred ToolSearch dance
             "ENABLE_TOOL_SEARCH": "false",
+            # ── CLI native disable flags (extracted from binary symbols) ──
+            # Stops the CLI from doing housekeeping that's irrelevant to a
+            # programmatic motor run. Without these, the binary writes
+            # session.jsonl, .claude.json, backups under a cwd-derived
+            # fallback path and triggers telemetry + title/onboarding.
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING": "1",
+            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+            "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+            "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+            "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+            "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1",
+            # Generic anti-noise (DISABLE_* without CLAUDE_CODE_ prefix)
+            "DISABLE_TELEMETRY": "1",
+            "DISABLE_ERROR_REPORTING": "1",
+            "DISABLE_AUTOUPDATER": "1",
+            "DISABLE_AUTO_COMPACT": "1",
+            "DISABLE_BUG_COMMAND": "1",
         }
+        if self.config.disable_claude_md:
+            # Native env-var alternative to tengu_paper_halyard in
+            # .config.json — both work, env is just less ceremonial.
+            env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
         if self._proxy is not None:
             env["ANTHROPIC_BASE_URL"] = self._proxy.base_url
             env["ANTHROPIC_AUTH_TOKEN"] = api_key

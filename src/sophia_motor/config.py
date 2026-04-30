@@ -125,8 +125,21 @@ class MotorConfig(BaseModel):
 
     # ── Workspace ────────────────────────────────────────────────────
     workspace_root: Path = Field(
-        default=Path("./.runs"),
-        description="Root directory for per-run workspaces.",
+        default_factory=lambda: Path.home() / ".sophia-motor" / "runs",
+        description=(
+            "Root directory for per-run workspaces. Default "
+            "`~/.sophia-motor/runs/` — outside any repo, always safe.\n\n"
+            "MUST be a directory whose ancestors do NOT contain `.git/`, "
+            "`pyproject.toml`, or `package.json`. The bundled Claude CLI "
+            "performs upward project-root discovery and, when triggered, "
+            "rewrites its own session/backup state into a deeply-nested "
+            "cwd-relative fallback path (verified empirically — no env var "
+            "currently overrides this behaviour, including CLAUDE_PROJECT_DIR).\n\n"
+            "Container deployments: pass an explicit `workspace_root` "
+            "pointed at a mounted volume, e.g. `MotorConfig("
+            "workspace_root='/data/sophia-motor/runs')` with `/data` mounted "
+            "for audit persistence across container restarts."
+        ),
     )
 
     # ── Proxy ────────────────────────────────────────────────────────
@@ -173,6 +186,19 @@ class MotorConfig(BaseModel):
             "SDK description for matching tools before forwarding upstream. "
             "Set to {} to disable. Override per Motor instance to attach "
             "program-specific guidance (e.g. domain-specific Read semantics)."
+        ),
+    )
+
+    # ── Skip ambient context (CLAUDE.md / memory) ────────────────────
+    disable_claude_md: bool = Field(
+        default=True,
+        description=(
+            "When True, set CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 in the CLI "
+            "subprocess env so the binary skips auto-loading Project/Local "
+            "CLAUDE.md and MEMORY.md into conversation context — keeps each "
+            "motor run isolated from ambient repo guidance. Default True "
+            "(motor runs are sandboxed by design). Set False to let the "
+            "CLI's native claudeMd injection work (useful for repo-aware tasks)."
         ),
     )
 
