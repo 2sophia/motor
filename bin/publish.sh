@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Build + (dry-check | publish) sophia-motor to PyPI.
+# Build wheel + (dry-check | publish) sophia-motor to PyPI.
+#
+# We ship only the wheel — no sdist. The wheel is the only artifact that
+# `pip install` downloads; the sdist would also bundle tests/ and the
+# project source layout, irrelevant to consumers.
 #
 # Usage:
-#   bin/publish.sh check        # build + show what WOULD be uploaded (default)
+#   bin/publish.sh check        # build wheel + show contents (default)
 #   bin/publish.sh testpypi     # upload to test.pypi.org sandbox
 #   bin/publish.sh pypi         # upload to real pypi.org (PROD)
 #
@@ -54,22 +58,22 @@ echo "==> package version: $VERSION"
 # ── 3. Clean previous build artifacts ─────────────────────────────────
 rm -rf dist/ build/ src/*.egg-info
 
-# ── 4. Build wheel + sdist ────────────────────────────────────────────
-echo "==> building wheel + sdist…"
-$PY -m build --quiet
+# ── 4. Build wheel only (no sdist) ────────────────────────────────────
+# We ship only the wheel: pure-Python package, all clients are pip-installable
+# from the wheel directly. The sdist would also include `tests/` and the
+# project source layout — useful for build-from-source forks but not the
+# default distribution channel.
+echo "==> building wheel (no sdist)…"
+$PY -m build --wheel --quiet
 
 # ── 5. Validate metadata ──────────────────────────────────────────────
 echo "==> twine check…"
 $PY -m twine check dist/*
 
-# ── 6. Show what's inside the wheel (the file users actually install) ─
+# ── 6. Show what's inside the wheel ───────────────────────────────────
 echo
 echo "==> wheel contents (THIS is what 'pip install' downloads):"
 $PY -m zipfile -l dist/sophia_motor-${VERSION}-py3-none-any.whl
-
-echo
-echo "==> sdist contents (build-from-source, includes tests):"
-tar tzf dist/sophia_motor-${VERSION}.tar.gz | sort
 
 # ── 7. Mode-dependent action ──────────────────────────────────────────
 case "$MODE" in
@@ -100,7 +104,7 @@ case "$MODE" in
         echo "⚠️  About to upload sophia-motor==$VERSION to pypi.org (PRODUCTION)"
         echo "   Press Enter to continue, Ctrl+C to abort."
         read -r
-        $PY -m twine upload dist/*
+        $PY -m twine upload dist/*.whl
         echo
         echo "✓ uploaded. Live at: https://pypi.org/project/sophia-motor/$VERSION/"
         echo "   Tag the release: git tag v$VERSION && git push --tags"
