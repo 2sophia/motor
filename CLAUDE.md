@@ -166,9 +166,18 @@ RunTask(
 | `proxy_strip_sdk_noise` | `True` | risparmia token su ogni request |
 | `proxy_strip_user_system_reminders` | `True` | strip `<system-reminder>` dai messaggi user dal turn 2 |
 | `console_log_enabled` | `True` | colorato, opt-out per silence |
+| `cli_no_session_persistence` | `True` | passa `--no-session-persistence` al CLI |
+| **Per-run defaults (overridable da `RunTask`)** | | |
+| `default_system` | `None` | system prompt comune a tutti i task |
+| `default_tools` | `None` | hard whitelist comune (es. `["Read","Skill"]`) |
+| `default_allowed_tools` | `None` | permission-skip comune |
+| `default_skills` | `None` | skill source(s) comuni |
+| `default_attachments` | `None` | attachments comuni (es. dossier reference) |
+| `default_disallowed_skills` | `[]` | skill da bloccare a default |
+| `default_disallowed_tools` | sensible blocklist | Web/Agent/MCP tools blocked by default |
 | `default_max_turns` | `20` | hard cap, override per RunTask |
 | `default_timeout_seconds` | `300` | non ancora wired in run() |
-| `cli_no_session_persistence` | `True` | passa `--no-session-persistence` al CLI |
+| `default_output_schema` | `None` | Pydantic class default per structured output |
 
 ## CLI quirks — cose imparate empiricamente
 
@@ -314,68 +323,143 @@ asyncio.run(main())
 "
 ```
 
-## API pubblica (ergonomica)
+## API pubblica — pattern «singleton motor + N task»
+
+Da quando esistono i `default_*` su `MotorConfig` (commit 50abc8b) e il
+lazy auto-start (commit 50abc8b), il pattern d'uso è il seguente.
+
+### 1) Istanzia UNA volta, a livello modulo (sync)
 
 ```python
-from sophia_motor import Motor, MotorConfig, RunTask
+# motor.py del progetto
+from typing import Literal
+from pathlib import Path
+from pydantic import BaseModel
+from sophia_motor import Motor, MotorConfig
 
-config = MotorConfig(
-    api_key=os.environ["ANTHROPIC_API_KEY"],
-    model="claude-opus-4-6",
-    workspace_root="./.runs",
-)
+class Verdict(BaseModel):
+    verdetto: Literal["ALTA", "MEDIA", "BASSA"]
+    motivazione: str
 
-async with Motor(config) as motor:
-    @motor.on_event
-    async def on_event(event):
-        # event.type: "run_started", "tool_use", "tool_result",
-        #             "assistant_text", "thinking", "proxy_request",
-        #             "proxy_response", "result"
-        ...
-
-    @motor.on_log
-    async def on_log(record):
-        # record.level: "DEBUG" | "INFO" | "WARNING" | "ERROR"
-        ...
-
-    result = await motor.run(RunTask(
-        prompt="...",
-        system="...",                       # optional system prompt
-        tools=["Read", "Skill"],            # HARD whitelist
-        allowed_tools=["Read", "Skill"],    # auto-allow
-        max_turns=10,
-        # attachments: singolo Path, oppure lista mista
-        attachments=Path("/data/"),
-        # skills: singolo folder source, oppure lista
-        skills=Path("./skills/"),
-        disallowed_skills=["heavy-one"],
-    ))
-
-    # result.run_id          str
-    # result.output_text     str | None  (final assistant text)
-    # result.blocks          list[dict]  (every text/thinking/tool_use/tool_result)
-    # result.metadata        RunMetadata (turns, tokens, cost, duration, is_error)
-    # result.audit_dir       Path        (dove vivono request_*.json / response_*.json)
-    # result.workspace_dir   Path        (run dir intera)
+motor = Motor(MotorConfig(
+    default_system="Sei un compliance officer.",
+    default_output_schema=Verdict,
+    default_tools=["Read", "Skill"],
+    default_skills=Path("./project_skills/"),
+    default_max_turns=15,
+))
+# nessun async with, nessun await — il proxy parte al primo motor.run()
 ```
+
+### 2) Le "funzioni intelligenti" sono normali async def Python
+
+```python
+# functions.py
+from .motor import motor
+from sophia_motor import RunTask
+
+async def assess_obligation(obligation: str, controls: list[str]) -> Verdict:
+    """Singolo task riusabile. Override solo se serve qualcosa di specifico."""
+    result = await motor.run(RunTask(
+        prompt=f"Valuta {obligation} contro:\n" + "\n".join(controls),
+        # niente system/output_schema/tools/skills/max_turns: vengono dai default
+    ))
+    if result.metadata.is_error:
+        raise RuntimeError(result.metadata.error_reason)
+    return result.output_data
+```
+
+### 3) Usalo dove vuoi
+
+```python
+# endpoint FastAPI
+@app.post("/verdict")
+async def verdict_endpoint(...):
+    return await assess_obligation(...)
+
+# script
+async def main():
+    v = await assess_obligation(...)
+asyncio.run(main())
+```
+
+### Override per task
+
+Se un task ha bisogno di tool/skill diversi, override esplicito:
+
+```python
+RunTask(
+    prompt="...",
+    tools=["Read"],        # override default_tools
+    skills=Path("..."),    # override default_skills
+    output_schema=Other,   # override default_output_schema
+)
+```
+
+Override semantica: **full replacement, mai merge**. Per "estendere" un
+default, il dev costruisce manualmente l'union.
+
+### Event bus (osservabilità)
+
+```python
+@motor.on_event
+async def on_event(event):
+    # event.type: "run_started", "tool_use", "tool_result",
+    #             "assistant_text", "thinking", "proxy_request",
+    #             "proxy_response", "result"
+    ...
+
+@motor.on_log
+async def on_log(record):
+    # record.level: "DEBUG" | "INFO" | "WARNING" | "ERROR"
+    ...
+```
+
+### RunResult fields
+
+```python
+result.run_id        # str — run-<ts>-<8hex>
+result.output_text   # str | None  (final assistant text, free-form)
+result.output_data   # BaseModel | None  (schema-validated, iff output_schema set)
+result.blocks        # list[dict]  (text/thinking/tool_use/tool_result)
+result.metadata      # RunMetadata (turns, tokens, cost, duration, is_error)
+result.audit_dir     # Path — <run>/audit/  (request_*.json + response_*.sse)
+result.workspace_dir # Path — <run>/  (full run dir)
+```
+
+### Lifecycle: cosa succede quando
+
+| Evento | Cosa fa il motor |
+|---|---|
+| `Motor(config)` (sync, top-level OK) | Solo costruzione oggetto. Niente proxy, niente lock. |
+| `await motor.run(...)` 1ª volta | Lazy auto-start del proxy (~500ms una volta). Esegue il run. |
+| `await motor.run(...)` chiamate successive | Riusa proxy esistente. Lock interna serializza. |
+| `await motor.stop()` (opzionale) | Spegne proxy. Per FastAPI lifespan o cleanup esplicito. |
+| Processo termina | Kernel killa thread asyncio + porta liberata automaticamente. |
+
+`async with Motor(...)` continua a funzionare come prima — uso
+alternativo per script controllati. Niente breaking changes.
 
 ## Cosa NON c'è ancora (roadmap)
 
-Stato: **PoC Fase 0 + 1a verificato** (lifecycle proxy + run end-to-end Opus 4.6 + skill linking + audit dump). Cosa manca per Fase 1 completa → ProgramRun strutturato:
+Stato: **PoC Fase 1 completa** (lifecycle proxy + run end-to-end Opus 4.6 + skill linking + audit dump + output schema strict + config defaults + lazy auto-start). Pip-installable, 73 unit test verdi.
 
-- [x] ~~Run end-to-end con Opus reale~~ — verificato 2026-04-30, skill `say-hello` end-to-end
+- [x] ~~Run end-to-end con Opus reale~~ — verificato 2026-04-30
 - [x] ~~Tool whitelist semantics~~ — `tools=` hard, `allowed_tools=` permission, `disallowed_tools=` block
-- [x] ~~CLI subprocess hardening~~ — env disable + quirks doc (vedi sezione "CLI quirks")
-- [ ] **Output schema strict** (JSON mode forzato via `--json-schema` flag native + Pydantic validation + retry self-correcting)
-- [ ] **`AgentProgram` dichiarativo** (system_prompt + allowed_tools + output_schema Pydantic + max_turns + budget)
-  - `motor.run_program(program, inputs)` → output Pydantic-conforming
-- [ ] **Custom tool / skill catalog** (pattern delle skill Sophia: SKILL.md + scripts/)
-  - Prima skill: `read_obligation` come riferimento
-- [ ] **Cost budget enforcement** (config + circuit breaker, env `--max-budget-usd` native)
+- [x] ~~CLI subprocess hardening~~ — env disable + quirks doc
+- [x] ~~Output schema strict~~ — `--json-schema` native + Pydantic validation (commit `e4d4c7c`)
+- [x] ~~Config defaults + lazy auto-start~~ — pattern singleton motor + N task (commit `50abc8b`)
+- [x] ~~README pubblicabile~~ — quick start, API, esempi (commit `50abc8b`)
+
+**Roadmap futura** (se servirà):
+
+- [ ] **`AgentProgram` dichiarativo** (orchestrazione di N AgentFunction con branching/retry/audit aggregato)
+  - Nota: per ora una "funzione intelligente" è una `async def` Python che wrappa `motor.run(RunTask)`. Formalizzazione `AgentProgram` solo quando emergerà bisogno reale (workflow multi-step compliance pipeline).
+- [ ] **Cost budget enforcement** (env `--max-budget-usd` native, circuit breaker)
 - [ ] **Prompt cache marker** (`cache_control: ephemeral` sul system prompt)
-- [ ] **Schema preflight** (proxy blocca tool fuori catalogo del programma)
-- [ ] **Drift detector** (cron — ri-esegue 5 verdict gold, alert se differisce)
-- [ ] **Eval suite** (pattern `eval/` di sophia, gold da `compliance_feedback`)
+- [ ] **MotorPool** per parallelismo nativo (oggi: N motor in `asyncio.gather`)
+- [ ] **Eval suite** (pattern `eval/` di sophia)
+- [ ] **PyPI publish** — wheel + GitHub Actions release
 
 ## Cosa NON deve toccare il motor
 
