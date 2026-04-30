@@ -11,3 +11,10 @@ __pycache__/
 build/
 dist/
 *.log
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
