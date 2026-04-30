@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from pydantic import BaseModel
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # attachments — polimorfo
@@ -88,6 +90,16 @@ class RunTask:
     skills: SkillsInput = None
     disallowed_skills: list[str] = field(default_factory=list)
 
+    # Strict structured output. When provided, the motor extracts the JSON
+    # Schema via `output_schema.model_json_schema()` and forwards it to the
+    # CLI via `--json-schema`. The CLI validates the model's structured
+    # response server-side (constraints honored: enum, range, pattern,
+    # additionalProperties:false, nested objects). The agent runs its full
+    # multi-turn loop (tool calls, reasoning, cross-reference) and at the
+    # end emits BOTH a free-text `result` AND a schema-conforming
+    # `structured_output`. Pydantic-validated into `RunResult.output_data`.
+    output_schema: Optional[type[BaseModel]] = None
+
 
 @dataclass
 class RunMetadata:
@@ -112,3 +124,7 @@ class RunResult:
     metadata: RunMetadata
     audit_dir: Path
     workspace_dir: Path
+    # Pydantic-validated payload, present iff RunTask.output_schema was set
+    # AND the CLI returned a schema-conforming structured_output.
+    # ValidationError → metadata.is_error = True, output_data = None.
+    output_data: Optional[BaseModel] = None

@@ -27,7 +27,9 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+from pydantic import BaseModel, ValidationError
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -208,6 +210,8 @@ class Motor:
             input_tokens = 0
             output_tokens = 0
             total_cost = 0.0
+            output_data: Optional[BaseModel] = None
+            structured_raw: Any = None
 
             try:
                 async with ClaudeSDKClient(options=opts) as client:
@@ -280,6 +284,27 @@ class Motor:
                             if isinstance(usage, dict):
                                 input_tokens = int(usage.get("input_tokens") or 0)
                                 output_tokens = int(usage.get("output_tokens") or 0)
+                            structured_raw = getattr(message, "structured_output", None)
+                            if task.output_schema is not None:
+                                if structured_raw is None:
+                                    is_error = True
+                                    error_reason = (
+                                        "output_schema set but CLI returned no "
+                                        "structured_output (model didn't emit a "
+                                        "schema-conforming payload)"
+                                    )
+                                else:
+                                    try:
+                                        output_data = task.output_schema.model_validate(
+                                            structured_raw,
+                                        )
+                                    except ValidationError as ve:
+                                        is_error = True
+                                        error_reason = (
+                                            f"structured_output failed Pydantic "
+                                            f"validation against {task.output_schema.__name__}: {ve}"
+                                        )
+                                        output_data = None
                             await self.events.emit_event(Event(
                                 type="result",
                                 run_id=run_id,
@@ -288,6 +313,8 @@ class Motor:
                                     "n_turns": n_turns,
                                     "cost_usd": total_cost,
                                     "result_preview": (result_text or "")[:200],
+                                    "structured_output_present": structured_raw is not None,
+                                    "output_data_validated": output_data is not None,
                                 },
                             ))
 
@@ -336,6 +363,7 @@ class Motor:
                 metadata=metadata,
                 audit_dir=audit_dir,
                 workspace_dir=workspace_dir,
+                output_data=output_data,
             )
 
     # ── helpers ──────────────────────────────────────────────────────
@@ -550,6 +578,16 @@ class Motor:
             extra_args["bare"] = None  # boolean flag (no value)
         if self.config.cli_no_session_persistence:
             extra_args["no-session-persistence"] = None
+        # Strict structured output: forward the Pydantic-derived JSON Schema
+        # to the CLI's `--json-schema` flag. The CLI validates the model's
+        # final structured payload server-side; the result lands in
+        # ResultMessage.structured_output and we Pydantic-validate it into
+        # RunResult.output_data. NEVER set --output-format here: it conflicts
+        # with the SDK's stream-json IPC and crashes the subprocess.
+        if task.output_schema is not None:
+            extra_args["json-schema"] = json.dumps(
+                task.output_schema.model_json_schema(),
+            )
         if extra_args:
             sdk_kwargs["extra_args"] = extra_args
 
