@@ -1,7 +1,8 @@
 """Pre-flight + materialization tests for `RunTask.attachments`.
 
 These run without ANTHROPIC_API_KEY (no SDK call). They exercise the
-`_validate_attachments` and `_materialize_attachments` helpers directly.
+`_validate_attachments` and `_materialize_attachments` helpers directly,
+plus `_normalize_to_list`.
 """
 from __future__ import annotations
 
@@ -13,9 +14,33 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from sophia_motor.motor import (  # noqa: E402
-    _validate_attachments,
     _materialize_attachments,
+    _normalize_to_list,
+    _validate_attachments,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# _normalize_to_list
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_normalize_none_to_empty():
+    assert _normalize_to_list(None) == []
+
+
+def test_normalize_single_path_to_list(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("x")
+    assert _normalize_to_list(f) == [f]
+
+
+def test_normalize_single_dict_to_list():
+    assert _normalize_to_list({"a.txt": "x"}) == [{"a.txt": "x"}]
+
+
+def test_normalize_list_passthrough():
+    items = [Path("/a"), {"b.txt": "x"}]
+    assert _normalize_to_list(items) == items
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -67,7 +92,7 @@ def test_validate_unreadable_path_raises_PermissionError(tmp_path):
         with pytest.raises(PermissionError, match="not readable"):
             _validate_attachments([f])
     finally:
-        f.chmod(0o644)  # cleanup so tmp_path can be removed
+        f.chmod(0o644)
 
 
 def test_validate_dict_value_not_str_raises_TypeError():
@@ -97,25 +122,23 @@ def test_validate_unsupported_type_raises_TypeError():
 
 def test_validate_conflicting_targets_raises_ValueError(tmp_path):
     f1 = tmp_path / "doc.txt"
-    f2 = tmp_path / "subdir"
-    f2.mkdir()
-    f2_doc = f2 / "doc.txt"
     f1.write_text("a")
-    f2_doc.write_text("b")
-    # both map to attachments/doc.txt → conflict
     with pytest.raises(ValueError, match="conflicts"):
         _validate_attachments([f1, {"doc.txt": "inline"}])
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# materialization
+# materialization — link by default for real paths, write for inline
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_materialize_inline_writes_file(tmp_path):
+def test_materialize_inline_writes_real_file(tmp_path):
     target = tmp_path / "att"
     target.mkdir()
     manifest = _materialize_attachments(target, [{"note.txt": "hello"}])
-    assert (target / "note.txt").read_text() == "hello"
+    note = target / "note.txt"
+    assert note.is_file()
+    assert not note.is_symlink()
+    assert note.read_text() == "hello"
     assert manifest == {"note.txt": "<inline>"}
 
 
@@ -126,17 +149,21 @@ def test_materialize_inline_with_subdir(tmp_path):
     assert (target / "sub" / "note.txt").read_text() == "x"
 
 
-def test_materialize_real_file_copied(tmp_path):
+def test_materialize_real_file_creates_symlink(tmp_path):
     src = tmp_path / "data.txt"
     src.write_text("payload")
     target = tmp_path / "att"
     target.mkdir()
     manifest = _materialize_attachments(target, [src])
-    assert (target / "data.txt").read_text() == "payload"
-    assert manifest == {"data.txt": str(src)}
+    linked = target / "data.txt"
+    assert linked.is_symlink()
+    assert linked.read_text() == "payload"  # link risolve correttamente
+    assert manifest["data.txt"].startswith("→ ")
+    assert manifest["data.txt"].endswith("(link)")
+    assert str(src.resolve()) in manifest["data.txt"]
 
 
-def test_materialize_real_dir_copied(tmp_path):
+def test_materialize_real_dir_creates_symlink(tmp_path):
     src = tmp_path / "docs"
     src.mkdir()
     (src / "a.txt").write_text("A")
@@ -144,8 +171,10 @@ def test_materialize_real_dir_copied(tmp_path):
     target = tmp_path / "att"
     target.mkdir()
     _materialize_attachments(target, [src])
-    assert (target / "docs" / "a.txt").read_text() == "A"
-    assert (target / "docs" / "b.txt").read_text() == "B"
+    linked = target / "docs"
+    assert linked.is_symlink()
+    assert (linked / "a.txt").read_text() == "A"
+    assert (linked / "b.txt").read_text() == "B"
 
 
 def test_materialize_mixed(tmp_path):
@@ -158,9 +187,12 @@ def test_materialize_mixed(tmp_path):
         {"note.txt": "inline content"},
         {"sub/n.txt": "deep"},
     ])
+    assert (target / "doc.pdf").is_symlink()
     assert (target / "doc.pdf").read_bytes() == b"PDF"
-    assert (target / "note.txt").read_text() == "inline content"
+    note = target / "note.txt"
+    assert note.is_file() and not note.is_symlink()
+    assert note.read_text() == "inline content"
     assert (target / "sub" / "n.txt").read_text() == "deep"
-    assert manifest["doc.pdf"] == str(src)
+    assert manifest["doc.pdf"].endswith("(link)")
     assert manifest["note.txt"] == "<inline>"
     assert manifest[str(Path("sub/n.txt"))] == "<inline>"

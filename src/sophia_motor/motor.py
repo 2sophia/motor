@@ -153,17 +153,31 @@ class Motor:
         # Pre-flight validation BEFORE we mint a run_id, set up workspace,
         # bind the proxy, or call the SDK. Better to fail loud here than to
         # spend tokens on a doomed run.
-        _validate_attachments(task.attachments)
+        attachments_items = _normalize_to_list(task.attachments)
+        skills_items = _normalize_to_list(task.skills)
+        _validate_attachments(attachments_items)
+        _validate_skills(skills_items, task.disallowed_skills)
 
         async with self._run_lock:
             run_id = self._mint_run_id()
-            workspace_dir, audit_dir, attachments_manifest = self._setup_workspace(run_id, task)
-            self._persist_input(workspace_dir, run_id, task, attachments_manifest)
+            (
+                workspace_dir,
+                audit_dir,
+                claude_dir,
+                attachments_manifest,
+                skills_manifest,
+            ) = self._setup_workspace(
+                run_id, attachments_items, skills_items, task.disallowed_skills,
+            )
+            self._persist_input(
+                workspace_dir, run_id, task,
+                attachments_manifest, skills_manifest,
+            )
 
             if self._proxy is not None:
                 self._proxy.set_active_run(run_id, audit_dir)
 
-            opts = self._build_sdk_options(task, workspace_dir, api_key)
+            opts = self._build_sdk_options(task, workspace_dir, claude_dir, api_key)
 
             await self.events.emit_event(Event(
                 type="run_started",
@@ -329,21 +343,41 @@ class Motor:
     def _mint_run_id() -> str:
         return f"run-{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
-    def _setup_workspace(self, run_id: str, task: RunTask) -> tuple[Path, Path, dict[str, str]]:
-        """Create workspace dirs and materialize attachments.
+    def _setup_workspace(
+        self,
+        run_id: str,
+        attachments_items: list,
+        skills_items: list,
+        disallowed_skills: list[str],
+    ) -> tuple[Path, Path, Path, dict[str, str], dict[str, str]]:
+        """Create workspace dirs and materialize attachments + skills.
 
-        Returns (workspace_dir, audit_dir, attachments_manifest). Attachments
-        are validated by `_validate_attachments` before this is called.
+        Returns (workspace_dir, audit_dir, claude_dir, attachments_manifest,
+        skills_manifest). Inputs already validated.
         """
         workspace_dir = self.config.workspace_root / run_id
         audit_dir = workspace_dir / "audit"
         attachments_dir = workspace_dir / "attachments"
         outputs_dir = workspace_dir / "outputs"
-        for d in (workspace_dir, audit_dir, attachments_dir, outputs_dir):
+        claude_dir = workspace_dir / ".claude"
+        skills_dir = claude_dir / "skills"
+        for d in (workspace_dir, audit_dir, attachments_dir, outputs_dir,
+                  claude_dir, skills_dir):
             d.mkdir(parents=True, exist_ok=True)
 
-        manifest = _materialize_attachments(attachments_dir, task.attachments)
-        return workspace_dir, audit_dir, manifest
+        attachments_manifest = _materialize_attachments(
+            attachments_dir, attachments_items,
+        )
+        skills_manifest = _materialize_skills(
+            skills_dir, skills_items, disallowed_skills,
+        )
+        return (
+            workspace_dir,
+            audit_dir,
+            claude_dir,
+            attachments_manifest,
+            skills_manifest,
+        )
 
     def _persist_input(
         self,
@@ -351,6 +385,7 @@ class Motor:
         run_id: str,
         task: RunTask,
         attachments_manifest: dict[str, str],
+        skills_manifest: dict[str, str],
     ) -> None:
         dump = {
             "run_id": run_id,
@@ -362,6 +397,8 @@ class Motor:
                 "disallowed_tools": task.disallowed_tools,
                 "max_turns": task.max_turns or self.config.default_max_turns,
                 "attachments": attachments_manifest,
+                "skills": skills_manifest,
+                "disallowed_skills": list(task.disallowed_skills),
             },
             "config": {
                 "model": self.config.model,
@@ -405,11 +442,15 @@ class Motor:
         self,
         task: RunTask,
         workspace_dir: Path,
+        claude_dir: Path,
         api_key: str,
     ) -> ClaudeAgentOptions:
         env: dict[str, str] = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "ANTHROPIC_API_KEY": api_key,
+            # CLAUDE_CONFIG_DIR makes the SDK CLI look for skills under
+            # <claude_dir>/skills/ instead of the default ~/.claude.
+            "CLAUDE_CONFIG_DIR": str(claude_dir),
             # default model env vars used by the Claude CLI
             "ANTHROPIC_DEFAULT_OPUS_MODEL": self.config.model,
             "ANTHROPIC_DEFAULT_SONNET_MODEL": self.config.model,
@@ -461,14 +502,27 @@ def _tool_result_preview(block: ToolResultBlock) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# attachments — pre-flight validation + materialization
+# polymorphic input normalization
+# ─────────────────────────────────────────────────────────────────────────
+
+def _normalize_to_list(value) -> list:
+    """Normalize singolo|lista|None → lista. Pure helper, no side effects."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return list(value)
+    return [value]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# attachments — pre-flight validation + materialization (LINK by default)
 #
 # `_validate_attachments` runs BEFORE any state mutation: no run_id minted,
-# no workspace created, no proxy bound, no SDK called. The dev gets a clean
-# error and can fix the input. No tokens consumed on a doomed run.
+# no workspace created, no proxy bound, no SDK called.
 #
-# `_materialize_attachments` runs only after validation succeeds. It copies
-# real files/dirs and writes inline files into <run>/attachments/.
+# `_materialize_attachments` runs only after validation succeeds. Real
+# paths become symlinks (no storage waste, no duplication); inline dicts
+# are written as real text files.
 # ─────────────────────────────────────────────────────────────────────────
 
 def _validate_attachments(items: list) -> None:
@@ -543,10 +597,11 @@ def _validate_attachments(items: list) -> None:
 
 
 def _materialize_attachments(attachments_dir: Path, items: list) -> dict[str, str]:
-    """Copy/write all attachments into `attachments_dir`.
+    """Symlink real paths and write inline files under `attachments_dir`.
 
-    Returns a manifest {final_relative_path → source_repr} suitable for
-    persistence in input.json (audit trail).
+    Returns a manifest {final_relative_path → source_repr}:
+      - "→ <abs_path> (link)" for symlinks
+      - "<inline>" for inline files
     """
     manifest: dict[str, str] = {}
     for item in items:
@@ -557,11 +612,84 @@ def _materialize_attachments(attachments_dir: Path, items: list) -> dict[str, st
                 target.write_text(content, encoding="utf-8")
                 manifest[str(Path(rel_path))] = "<inline>"
         else:
-            src = Path(item)
+            src = Path(item).resolve(strict=True)
             target = attachments_dir / src.name
-            if src.is_file():
-                shutil.copy2(src, target)
-            else:  # src.is_dir() guaranteed by validation
-                shutil.copytree(src, target)
-            manifest[src.name] = str(src)
+            target.symlink_to(src)
+            manifest[src.name] = f"→ {src} (link)"
+    return manifest
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# skills — pre-flight validation + materialization
+#
+# Each source dir is a folder containing skill subdirs. A subdir is a valid
+# skill iff it contains SKILL.md. Skills are linked individually into
+# <run>/.claude/skills/<skill_name>/ — never copied. Conflict between
+# sources (same skill name) raises a clear error.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _validate_skills(items: list, disallowed: list[str]) -> None:
+    """Pre-flight: every source must exist and be a dir; no name conflicts."""
+    seen: dict[str, str] = {}  # skill_name → source_dir_path
+    for i, item in enumerate(items):
+        if not isinstance(item, (str, Path)):
+            raise TypeError(
+                f"skills[{i}]: unsupported type {type(item).__name__}; "
+                f"must be str | Path"
+            )
+        src = Path(item)
+        if not src.exists():
+            raise FileNotFoundError(
+                f"skills[{i}]: source dir {str(src)!r} does not exist"
+            )
+        if not src.is_dir():
+            raise ValueError(
+                f"skills[{i}]: source path {str(src)!r} is not a directory"
+            )
+        if not os.access(src, os.R_OK):
+            raise PermissionError(
+                f"skills[{i}]: source dir {str(src)!r} is not readable"
+            )
+        for child in sorted(src.iterdir()):
+            if not child.is_dir():
+                continue
+            if not (child / "SKILL.md").is_file():
+                continue  # not a skill, just a sibling dir
+            name = child.name
+            if name in disallowed:
+                continue
+            if name in seen:
+                raise ValueError(
+                    f"skills[{i}]: skill {name!r} provided by {str(src)!r} "
+                    f"conflicts with same-name skill from {seen[name]!r}; "
+                    f"rename one or add to disallowed_skills"
+                )
+            seen[name] = str(src)
+
+
+def _materialize_skills(
+    skills_dir: Path,
+    items: list,
+    disallowed: list[str],
+) -> dict[str, str]:
+    """Create one symlink per enabled skill under `skills_dir`.
+
+    Returns a manifest {skill_name → "→ <abs_source> (link)"}.
+    Skipped: subdirs without SKILL.md, or names listed in `disallowed`.
+    """
+    manifest: dict[str, str] = {}
+    for item in items:
+        src_root = Path(item).resolve(strict=True)
+        for child in sorted(src_root.iterdir()):
+            if not child.is_dir():
+                continue
+            if not (child / "SKILL.md").is_file():
+                continue
+            name = child.name
+            if name in disallowed:
+                continue
+            target = skills_dir / name
+            child_resolved = child.resolve(strict=True)
+            target.symlink_to(child_resolved)
+            manifest[name] = f"→ {child_resolved} (link)"
     return manifest

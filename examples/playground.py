@@ -37,21 +37,29 @@ PROMPT = (
 )
 
 # ── 👇 TODO: attachments — cosa l'agent troverà sotto attachments/ ──────
-# Lista polimorfa, mix libero. Tre forme accettate:
+# Accetta singolo o lista. Forme valide (mix libero in lista):
 #
-#   1. Path / str → file reale  → copiato in attachments/<filename>
-#        Path("/data/regulation.pdf")  → attachments/regulation.pdf
+#   1. Path / str → file reale  → SYMLINK in attachments/<filename>
+#        Path("/data/regulation.pdf")  → attachments/regulation.pdf (link)
 #
-#   2. Path / str → directory reale → copiata ricorsivamente
-#        Path("/data/policy_dir")  → attachments/policy_dir/...
+#   2. Path / str → directory reale  → SYMLINK alla dir intera
+#        Path("/data/policy_dir")  → attachments/policy_dir (link)
 #
-#   3. dict[str, str] → file inline {relpath: contenuto}
+#   3. dict[str, str] → file inline (vero file, non link)
 #        {"data.txt": "..."}              → attachments/data.txt
 #        {"sub/note.txt": "..."}          → attachments/sub/note.txt
 #
-# Pre-flight check automatico — se manca o non è leggibile, raise
-# PRIMA di consumare token.
-ATTACHMENTS: list = [
+# Default: SYMLINK per Path → niente storage waste, niente duplicazione.
+# Pre-flight check automatico (path mancante / non leggibile / conflitti
+# di nome → raise PRIMA di consumare token).
+#
+# Esempi (decommenta quello che ti serve):
+#
+#   ATTACHMENTS = Path("/data/regulatory/")          # singola dir, link
+#   ATTACHMENTS = [Path("/a.pdf"), Path("/b.pdf")]   # più file, link
+#   ATTACHMENTS = {"note.txt": "ciao"}                # solo inline
+#
+ATTACHMENTS = [
     {
         "data.txt": (
             "ViViBanca pubblica trimestralmente i tassi soglia ai sensi "
@@ -61,9 +69,20 @@ ATTACHMENTS: list = [
             "giorni dalla pubblicazione del decreto MEF."
         ),
     },
-    # esempio path reale (decommenta e cambia con un tuo PDF/MD reale):
-    # Path("/home/mwspace/htdocs/rgci-intelligence/.data/some_doc.pdf"),
 ]
+
+# ── 👇 TODO: skills — folder source delle SKILL.md del programma ────────
+# Accetta singolo Path o lista di Path (multi-source). Ogni subdir con
+# SKILL.md viene LINKATA in <run>/.claude/skills/<name>. Nessuna copia.
+# Conflict di nome tra sources → errore chiaro.
+#
+# Esempi:
+#   SKILLS = Path("./skills/")                       # singola folder
+#   SKILLS = [Path("./skills/"), Path("./shared/")]  # multi-source
+#   SKILLS = None                                     # niente skill
+#
+SKILLS = None
+DISALLOWED_SKILLS: list[str] = []  # nomi di skill da NON abilitare
 
 # ── 👇 TODO: tool che il modello può usare (HARD whitelist) ─────────────
 # Esempi:
@@ -104,6 +123,8 @@ async def main() -> None:
             tools=TOOLS,
             allowed_tools=TOOLS,
             attachments=ATTACHMENTS,
+            skills=SKILLS,
+            disallowed_skills=DISALLOWED_SKILLS,
             max_turns=10,
         ))
 

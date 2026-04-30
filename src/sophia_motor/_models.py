@@ -9,32 +9,52 @@ from typing import Any, Optional, Union
 # ─────────────────────────────────────────────────────────────────────────
 # attachments — polimorfo
 #
-# Lista di item che il motor materializza sotto <run>/attachments/
-# prima di lanciare l'agent. Ogni item può essere una di queste tre cose:
+# Accetta singolo o lista. Forme valide (mix libero in lista):
 #
-#   1. str | Path  →  path esistente di un FILE reale
-#         es. Path("/data/regulation.pdf")
-#         risultato: <run>/attachments/regulation.pdf  (shutil.copy2)
+#   1. str | Path  →  file reale  → symlink in <run>/attachments/<name>
+#   2. str | Path  →  directory   → symlink in <run>/attachments/<name>/
+#   3. dict[str, str]  →  inline  → file scritto in <run>/attachments/<relpath>
 #
-#   2. str | Path  →  path esistente di una DIRECTORY reale
-#         es. Path("/data/policy_dir/")
-#         risultato: <run>/attachments/policy_dir/...  (shutil.copytree)
+# Default: SYMLINK per Path (no copy, no storage waste, no duplicazione).
+# L'audit BdI passa per gli SSE in <run>/audit/, non per il filesystem in
+# attachments/. Un symlink che cambia dopo non rompe la difesa: il dump
+# dei tool_result registra il TESTO che il modello ha letto, non i bytes
+# correnti del file.
 #
-#   3. dict[str, str]  →  file inline {relpath: content}
-#         es. {"note.txt": "ciao"}  oppure  {"sub/note.txt": "ciao"}
-#         risultato: <run>/attachments/note.txt  (write_text)
+# Sandbox escape (link malevoli a /etc/passwd ecc.): trust nel dev. Per
+# applicazioni con utenti finali untrusted, sopra il motor va messo un
+# guard PreToolUse layer (pattern sophia).
 #
-# Pre-flight automatico prima di chiamare il SDK:
-#   - path mancanti → FileNotFoundError
+# Pre-flight check prima di consumare token:
+#   - path mancante → FileNotFoundError
 #   - non file né dir → ValueError
 #   - non leggibile → PermissionError
 #   - dict key absolute o con `..` → ValueError
 #   - dict value non-str → TypeError
 #   - due item che destinano allo stesso path → ValueError (conflitto)
-#
-# Niente symlink: copia sempre. Audit bit-perfect, niente sandbox-escape.
 # ─────────────────────────────────────────────────────────────────────────
 AttachmentItem = Union[str, Path, dict[str, str]]
+AttachmentsInput = Union[AttachmentItem, list[AttachmentItem], None]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# skills — folder source delle SKILL.md del programma
+#
+# Accetta singolo o lista (il dev può avere skill in più dir, es. una del
+# programma e una shared org-wide). Per ogni dir source il motor:
+#   - itera le sue subdir
+#   - tra quelle che hanno un SKILL.md e che non sono in disallowed_skills
+#   - crea un symlink <run>/.claude/skills/<skill_name> → <source>/<skill_name>
+#
+# Conflict detection: se due dir source forniscono una skill con lo stesso
+# nome → ValueError chiaro. Il dev rinomina una delle due o usa disallowed.
+#
+# Pre-flight check:
+#   - skills path manacante → FileNotFoundError
+#   - path non è una dir → ValueError
+#   - conflict di nome tra source → ValueError
+# ─────────────────────────────────────────────────────────────────────────
+SkillsInput = Union[str, Path, list[Union[str, Path]], None]
 
 
 @dataclass
@@ -48,14 +68,11 @@ class RunTask:
         []         → no tools at all
         ["Read"]   → only Read is available; everything else does not exist
 
-      allowed_tools (PERMISSION SKIP — what auto-runs without prompting):
-        These tools execute automatically without an approval step. Does NOT
-        restrict — `allowed_tools=["Read"]` does NOT block Bash if Bash is in
-        the loaded `tools` set. Pair with `tools=` for true restriction.
+      allowed_tools (PERMISSION SKIP — auto-runs without prompting):
+        Skip the permission prompt; does NOT restrict.
 
       disallowed_tools (HARD BLOCK — removed from the model's context):
-        Even if `tools=` would allow them. Use this for "never ever" tools
-        (WebFetch, agentic spawning, ...).
+        Use for "never ever" tools (WebFetch, agent spawning, ...).
     """
     prompt: str
     system: Optional[str] = None
@@ -63,7 +80,13 @@ class RunTask:
     allowed_tools: Optional[list[str]] = None
     disallowed_tools: Optional[list[str]] = None
     max_turns: Optional[int] = None
-    attachments: list[AttachmentItem] = field(default_factory=list)
+
+    # input data — singolo Path | str | dict, oppure lista mista
+    attachments: AttachmentsInput = None
+
+    # codice/strumenti — singolo Path | str, oppure lista
+    skills: SkillsInput = None
+    disallowed_skills: list[str] = field(default_factory=list)
 
 
 @dataclass
