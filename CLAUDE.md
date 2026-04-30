@@ -248,7 +248,7 @@ python3.12 -m venv .venv
 
 Da qui in poi tutto gira via `.venv/bin/python` o `.venv/bin/pytest`.
 
-### Quick playground (per provare task custom)
+### Esempi runnabili (`examples/`)
 
 ```bash
 cd /home/mwspace/htdocs/sophia-motor
@@ -256,32 +256,22 @@ cd /home/mwspace/htdocs/sophia-motor
 # api key in ./.env oppure esportata in shell
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
-.venv/bin/python examples/playground.py
-```
+# pattern singleton motor + funzione intelligente
+.venv/bin/python examples/verdict_minimal.py
 
-`examples/playground.py` ha 3 sezioni TODO da editare: prompt, file da seedare,
-tool whitelist. Tutto il resto (proxy, audit dump, console log) è auto via
-`MotorConfig()`.
+# skill linking end-to-end (skills_example/say_hello/)
+.venv/bin/python examples/skill_test.py
+```
 
 ### Cleanup runs accumulati
 
-```bash
-.venv/bin/python examples/clean.py     # default: tieni gli ultimi 5
-```
-
-In codice:
 ```python
 from sophia_motor import clean_runs
-clean_runs(".runs", keep_last=5)        # tieni gli ultimi 5
-clean_runs(".runs", older_than_days=7)  # rimuovi >7gg
-clean_runs(".runs")                     # rimuovi tutto
-clean_runs(".runs", dry_run=True)       # solo lista
-```
+clean_runs("~/.sophia-motor/runs", keep_last=5)
+clean_runs("~/.sophia-motor/runs", older_than_days=7)
 
-Oppure bound al motor:
-```python
-async with Motor(config) as motor:
-    motor.clean_runs(keep_last=10)
+# bound al motor
+motor.clean_runs(keep_last=10)
 ```
 
 ### Run smoke test (legacy interno)

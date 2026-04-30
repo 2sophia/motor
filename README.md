@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/sophia-logo.svg" width="96" height="96" alt="Sophia Motor"/>
+  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/sophia-logo.svg" width="96" height="96" alt="Sophia Motor"/>
 
 # Sophia Motor
 
