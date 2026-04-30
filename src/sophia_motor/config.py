@@ -7,6 +7,34 @@ from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 
 
+def _resolve_api_key() -> str:
+    """Resolve ANTHROPIC_API_KEY from (in order): env var → ./.env file.
+
+    Lightweight inline .env parser — avoids adding python-dotenv as dep.
+    Honors `KEY=value`, `KEY="value"`, `KEY='value'`. Skips comments and
+    blank lines. Returns "" if nothing is found; the Motor will then raise
+    a clear error at first .run() call.
+    """
+    if v := os.environ.get("ANTHROPIC_API_KEY"):
+        return v
+    env_path = Path.cwd() / ".env"
+    if not env_path.exists():
+        return ""
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == "ANTHROPIC_API_KEY":
+                return v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
 # Tool description overrides applied at proxy layer.
 # The default Claude CLI ships with verbose, dev-oriented descriptions for the
 # core tools that don't fit a sandboxed agent run: Read says "use absolute
@@ -72,8 +100,12 @@ class MotorConfig(BaseModel):
 
     # ── Anthropic API ────────────────────────────────────────────────
     api_key: str = Field(
-        default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""),
-        description="Anthropic API key. Defaults to ANTHROPIC_API_KEY env var.",
+        default_factory=_resolve_api_key,
+        description=(
+            "Anthropic API key. Resolution cascade: explicit param > "
+            "ANTHROPIC_API_KEY env var > ./.env file in cwd. Empty string "
+            "if all three are missing → first .run() raises with a clear msg."
+        ),
     )
     model: str = Field(
         default="claude-opus-4-6",

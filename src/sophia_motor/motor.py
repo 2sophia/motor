@@ -42,6 +42,7 @@ from claude_agent_sdk import (
 )
 
 from ._models import RunMetadata, RunResult, RunTask
+from .cleanup import clean_runs as _clean_runs_helper
 from .config import MotorConfig
 from .events import (
     Event,
@@ -109,6 +110,34 @@ class Motor:
             self._proxy = None
         self._started = False
         await self.events.log("INFO", "motor stopped")
+
+    # ── workspace cleanup ────────────────────────────────────────────
+
+    def clean_runs(
+        self,
+        *,
+        keep_last: int = 0,
+        older_than_days: float | None = None,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        """Remove run directories under this Motor's workspace_root.
+
+        Bound version of `sophia_motor.clean_runs`: targets `self.config.workspace_root`.
+
+        Args:
+            keep_last:       keep the N most recent runs (default 0 = remove all)
+            older_than_days: only consider runs older than this many days
+            dry_run:         list what would be removed without deleting
+
+        Returns:
+            List of paths removed (or that would be removed in dry_run).
+        """
+        return _clean_runs_helper(
+            self.config.workspace_root,
+            keep_last=keep_last,
+            older_than_days=older_than_days,
+            dry_run=dry_run,
+        )
 
     # ── run ──────────────────────────────────────────────────────────
 
