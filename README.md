@@ -269,6 +269,61 @@ Motor(MotorConfig(guardrail="off"))         # no hook (you take responsibility)
 ---
 
 
+## Configuration reference
+
+### `MotorConfig`
+
+Settings on the motor instance — set once at construction.
+
+| Field | Type | Default | What it does |
+|---|---|---|---|
+| `model` | `str` | `"claude-opus-4-6"` | Default model the SDK uses |
+| `api_key` | `str` | from `ANTHROPIC_API_KEY` env / `./.env` | Anthropic API key |
+| `workspace_root` | `Path` | `~/.sophia-motor/runs/` | Where per-run dirs are created. Must be outside any git repo / `pyproject.toml` ancestor |
+| `guardrail` | `"strict" \| "permissive" \| "off"` | `"strict"` | Built-in PreToolUse hook (see *Guardrail* above) |
+| `disable_claude_md` | `bool` | `True` | Skip auto-loading repo `CLAUDE.md` / `MEMORY.md` into the agent's context |
+| `console_log_enabled` | `bool` | `True` | Colored console logger for events (off for silent runs) |
+| **Per-task defaults** (overridable by `RunTask`) | | | |
+| `default_system` | `str?` | `None` | Default system prompt |
+| `default_tools` | `list[str]?` | `None` | Default hard whitelist (`None` = SDK preset, `[]` = no tools) |
+| `default_allowed_tools` | `list[str]?` | `None` | Default permission-skip list |
+| `default_disallowed_tools` | `list[str]` | sensible blocklist | Default hard block (Web, Agent spawn, Cron, MCP auth, ...) |
+| `default_skills` | `Path \| str \| list?` | `None` | Default skills source(s) |
+| `default_attachments` | `Path \| dict \| list?` | `None` | Default attachments |
+| `default_disallowed_skills` | `list[str]` | `[]` | Default disallowed skill names |
+| `default_max_turns` | `int` | `20` | Default per-run turn cap |
+| `default_output_schema` | `type[BaseModel]?` | `None` | Default Pydantic class for structured output |
+
+### `RunTask`
+
+Settings on the single call — passed to `motor.run(RunTask(...))`. Anything left unset falls back to the matching `MotorConfig.default_*`.
+
+| Field | Type | What it does |
+|---|---|---|
+| `prompt` | `str` | **Required.** The user-message instruction |
+| `system` | `str?` | System prompt for this task (overrides `default_system`) |
+| `tools` | `list[str]?` | Hard whitelist of tools the model can SEE. `[]` = no tools, `None` = use default |
+| `allowed_tools` | `list[str]?` | Tools that auto-run without permission prompt |
+| `disallowed_tools` | `list[str]?` | Tools hard-blocked from the model's context |
+| `max_turns` | `int?` | Per-task turn cap (overrides default) |
+| `attachments` | `Path \| dict \| list?` | Files the agent can read. `Path` → symlink, `dict[str,str]` → inline file, mixed list supported |
+| `skills` | `Path \| str \| list?` | Skill source folder(s). Each subdir with `SKILL.md` is linked into the run |
+| `disallowed_skills` | `list[str]` | Skill names to skip even if found in source |
+| `output_schema` | `type[BaseModel]?` | Pydantic class — agent commits to this shape, returned in `RunResult.output_data` |
+
+### `RunResult`
+
+What `motor.run(...)` returns.
+
+| Field | Type | What it is |
+|---|---|---|
+| `run_id` | `str` | `run-<unix>-<8hex>` |
+| `output_text` | `str?` | Final assistant text (free-form) |
+| `output_data` | `BaseModel?` | Schema-validated payload, present iff `output_schema` was set |
+| `metadata` | `RunMetadata` | `n_turns`, `n_tool_calls`, tokens, `total_cost_usd`, `duration_s`, `is_error`, `error_reason` |
+| `audit_dir` | `Path` | `<run>/audit/` (request_*.json + response_*.sse) |
+| `workspace_dir` | `Path` | The full run dir |
+
 ## License & attribution
 
 MIT.
