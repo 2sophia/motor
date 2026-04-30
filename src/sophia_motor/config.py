@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from typing import Any, Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -231,6 +233,48 @@ class MotorConfig(BaseModel):
     )
 
     # ── Run defaults (overridable per RunTask) ───────────────────────
+    # The pattern: define common settings here once at Motor construction,
+    # then call `motor.run(RunTask(prompt="..."))` N times. RunTask fields
+    # explicitly set by the caller WIN; otherwise these defaults apply.
+    # Override semantics: full replacement, NOT merge — if the dev wants
+    # to "extend" defaults for a single task, they pass the union manually.
+    default_system: Optional[str] = Field(
+        default=None,
+        description="Default system prompt applied when RunTask.system is None.",
+    )
+    default_tools: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "Default hard tool whitelist (what the model can SEE) when "
+            "RunTask.tools is None. None means 'SDK preset' (all built-ins). "
+            "Use [] to default to no tools."
+        ),
+    )
+    default_allowed_tools: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "Default permission-skip list when RunTask.allowed_tools is None. "
+            "Tools listed here auto-run without prompting the user."
+        ),
+    )
+    default_skills: Any = Field(
+        default=None,
+        description=(
+            "Default skills source(s) when RunTask.skills is None. "
+            "Same polymorphic shape as RunTask.skills (str | Path | list)."
+        ),
+    )
+    default_attachments: Any = Field(
+        default=None,
+        description=(
+            "Default attachments when RunTask.attachments is None. "
+            "Useful for static reference material every task should see."
+        ),
+    )
+    default_disallowed_skills: list[str] = Field(
+        default_factory=list,
+        description="Default disallowed_skills applied when RunTask.disallowed_skills is empty.",
+    )
     default_max_turns: int = 20
     default_timeout_seconds: int = 300
     default_disallowed_tools: list[str] = Field(
@@ -240,6 +284,14 @@ class MotorConfig(BaseModel):
             "RunTask.disallowed_tools. Sensible defaults: web access, "
             "agentic spawning, worktrees/cron/notebook/remote, MCP auth — "
             "things a compliance-reasoning agent should never have."
+        ),
+    )
+    default_output_schema: Any = Field(
+        default=None,
+        description=(
+            "Default Pydantic BaseModel class for structured output when "
+            "RunTask.output_schema is None. Useful when N tasks share the "
+            "same output shape and only the prompt varies."
         ),
     )
 

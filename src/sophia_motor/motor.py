@@ -145,12 +145,17 @@ class Motor:
     # ── run ──────────────────────────────────────────────────────────
 
     async def run(self, task: RunTask) -> RunResult:
+        # Lazy auto-start: the proxy boots on first run, stays alive across
+        # subsequent runs, and dies when the process terminates. Junior-
+        # friendly: `Motor()` at module top-level + `await motor.run(...)`
+        # anywhere — no lifecycle ceremony required.
         if not self._started:
-            raise RuntimeError(
-                "Motor not started. Use `async with Motor(...)` "
-                "or call `await motor.start()` first."
-            )
+            await self.start()
         api_key = self.config.require_api_key()
+
+        # Apply MotorConfig defaults to any RunTask field left at None / [].
+        # Override semantics: full replacement, never merge.
+        task = self._apply_config_defaults(task)
 
         # Pre-flight validation BEFORE we mint a run_id, set up workspace,
         # bind the proxy, or call the SDK. Better to fail loud here than to
@@ -427,6 +432,41 @@ class Motor:
             claude_dir,
             attachments_manifest,
             skills_manifest,
+        )
+
+    def _apply_config_defaults(self, task: RunTask) -> RunTask:
+        """Return a RunTask with MotorConfig defaults filled in for any
+        field the caller left unset.
+
+        Override semantics: explicit `None` / empty-list / empty-string on the
+        task means "use the config default". Anything else (including `[]`
+        for `tools` to mean "no tools") is treated as an explicit choice
+        and wins over the default.
+        """
+        cfg = self.config
+        return RunTask(
+            prompt=task.prompt,
+            system=task.system if task.system is not None else cfg.default_system,
+            tools=task.tools if task.tools is not None else cfg.default_tools,
+            allowed_tools=(
+                task.allowed_tools if task.allowed_tools is not None
+                else cfg.default_allowed_tools
+            ),
+            disallowed_tools=(
+                task.disallowed_tools if task.disallowed_tools is not None
+                else list(cfg.default_disallowed_tools)
+            ),
+            max_turns=task.max_turns if task.max_turns is not None else cfg.default_max_turns,
+            attachments=task.attachments if task.attachments is not None else cfg.default_attachments,
+            skills=task.skills if task.skills is not None else cfg.default_skills,
+            disallowed_skills=(
+                list(task.disallowed_skills) if task.disallowed_skills
+                else list(cfg.default_disallowed_skills)
+            ),
+            output_schema=(
+                task.output_schema if task.output_schema is not None
+                else cfg.default_output_schema
+            ),
         )
 
     def _seed_claude_config_dir(self, claude_dir: Path, plugins_dir: Path) -> None:
