@@ -45,6 +45,23 @@ Same motor, **N tasks**, each with its own schema. The agent does the magic; **y
 
 ---
 
+## Install
+
+```bash
+pip install sophia-motor
+```
+
+Set `ANTHROPIC_API_KEY` in env (or `./.env`). Done.
+
+```python
+motor = Motor()                    # boots on first call, no setup
+v = await motor.run(RunTask(...))  # ← right away
+```
+
+For long-running services (FastAPI, Celery), instance the motor once and call `await motor.stop()` on shutdown. Single-shot scripts? Don't worry about it — the process death cleans up.
+
+---
+
 ## What it gives you
 
 |  |  |
@@ -235,22 +252,6 @@ a, b = await asyncio.gather(m1.run(task_a), m2.run(task_b))
 
 ---
 
-## Install
-
-```bash
-pip install sophia-motor
-```
-
-Set `ANTHROPIC_API_KEY` in env (or `./.env`). Done.
-
-```python
-motor = Motor()                    # boots on first call, no setup
-v = await motor.run(RunTask(...))  # ← right away
-```
-
-For long-running services (FastAPI, Celery), instance the motor once and call `await motor.stop()` on shutdown. Single-shot scripts? Don't worry about it — the process death cleans up.
-
----
 
 ## License & attribution
 
