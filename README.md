@@ -147,23 +147,37 @@ result = await motor.run(RunTask(
 
 ### 3 · Orchestrate skills — the agent picks which to call
 
-Drop a folder of `SKILL.md` files. The agent reads their descriptions, decides which to use for the task, calls them in the right order, and composes the result.
+Drop a folder of `SKILL.md` files. The agent reads their descriptions, decides which to use for the input, calls them in the right order, and composes the answer into your typed schema.
 
 ```python
+class RiskFinding(BaseModel):
+    severity: Literal["low", "medium", "high"]
+    quote: str               # verbatim from the contract
+    impact: str
+
+class ContractAnalysis(BaseModel):
+    parties: list[str]
+    key_obligations: list[str]
+    risks: list[RiskFinding]
+    short_summary: str
+
 result = await motor.run(RunTask(
     prompt=(
-        "Prepare a 1-page risk brief on attachments/contract.pdf. "
-        "Decide yourself which skills to use."
+        "Analyze attachments/contract.pdf. Use the skills you have to "
+        "extract parties, obligations and risks, then compose the answer."
     ),
     tools=["Read", "Skill"],
     attachments=Path("./contract.pdf"),
-    skills=Path("./skills/"),          # contains: extract-entities, risk-score, summarize, ...
-    output_schema=RiskBrief,
+    skills=Path("./skills/"),          # contains: extract-entities, risk-score, ...
+    output_schema=ContractAnalysis,
     max_turns=15,
 ))
+
+analysis: ContractAnalysis = result.output_data
+high_risks = [r for r in analysis.risks if r.severity == "high"]
 ```
 
-The agent might call `extract-entities` on the contract, feed those into `risk-score`, then `summarize` the result — choosing the path itself from the SKILL.md descriptions. You write skills, the agent composes them.
+The agent might call `extract-entities` to find the parties, then `risk-score` on the obligations, choosing the path itself from the SKILL.md descriptions. You write skills, the agent composes them — and you get back a typed object, not a free-form report.
 
 ### 4 · Decompose, decide, justify — typed end-to-end
 
