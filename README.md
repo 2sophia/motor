@@ -139,6 +139,31 @@ result = await motor.run(RunTask(
 ))
 ```
 
+What actually happens behind that single `await`:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant You as Your code
+    participant Motor
+    participant Agent
+    participant Tool as Read tool
+    participant API as Anthropic API
+
+    You->>Motor: motor.run(task + schema)
+    Motor->>Agent: open multi-turn loop
+    Agent->>API: reason about task
+    Agent->>Tool: Read("notes/policy.md")
+    Tool-->>Agent: file content
+    Agent->>API: reason + cross-ref
+    Agent->>Tool: Read("notes/case.md")
+    Tool-->>Agent: file content
+    Agent->>API: commit to schema
+    API-->>Agent: structured_output (validated server-side)
+    Agent-->>Motor: ResultMessage
+    Motor-->>You: RunResult.output_data → FactCheck instance
+```
+
 Verified path: agent calls `Read` once, twice, three times — finds the relevant snippet, quotes verbatim, **then** emits the schema-conforming JSON. Same run, multi-turn loop and structured output **coexist**.
 
 ---
@@ -160,6 +185,14 @@ motor = Motor(MotorConfig(
 Each `<source>/<skill_name>/SKILL.md` is linked into the run's config dir at runtime. **Multi-source**, conflict detection, no copy.
 
 ---
+
+## One motor, N smart functions
+
+Boot the motor once at module top-level. Wrap each task as a normal Python `async def`. Same proxy, same audit trail, same defaults — N typed functions, each with its own Pydantic schema.
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/singleton.svg" alt="Singleton motor + N smart functions" width="100%"/>
+</div>
 
 ## Defaults + per-task override
 
