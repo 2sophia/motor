@@ -5,17 +5,24 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sophia-motor"
 version = "0.0.1"
-description = "Programmable, instanceable agent motor — wraps Claude Agent SDK with proxy gateway, audit log, and event bus. Built for Sophia/RGCI compliance reasoning."
+description = "Smart functions for Python. Inputs in, Pydantic out, multi-turn agent in the middle."
 authors = [{name = "Sophia AI", email = "tech@2sophia.ai"}]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.12"
-keywords = ["claude", "agent-sdk", "compliance", "anthropic", "motor"]
+keywords = ["claude", "agent", "agent-sdk", "anthropic", "pydantic", "structured-output", "llm", "ai"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
-    "Topic :: Software Development :: Libraries",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
 ]
 
 dependencies = [
@@ -40,7 +47,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mwspace/sophia-motor"
+Homepage = "https://github.com/2sophia/motor"
+Repository = "https://github.com/2sophia/motor"
+Issues = "https://github.com/2sophia/motor/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
