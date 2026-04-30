@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophia-motor"
-version = "0.0.1"
+version = "0.0.2"
 description = "Smart functions for Python. Inputs in, Pydantic out, multi-turn agent in the middle."
 authors = [{name = "Sophia AI", email = "tech@2sophia.ai"}]
 license = {text = "MIT"}
