@@ -79,89 +79,128 @@ For long-running services (FastAPI, Celery), instance the motor once and call `a
 
 ## Examples
 
-Four real, copy-pasteable patterns. Same `motor` instance, different RunTask.
+Things you **cannot** ship with a single LLM call. Same `motor` instance, different RunTask.
 
 ```python
-from sophia_motor import Motor, MotorConfig, RunTask
+from sophia_motor import Motor, RunTask
 motor = Motor()   # one instance, used everywhere below
 ```
 
-### 1 · Hello world — free-form text out
+### 1 · Investigate a folder, find what matters
 
-```python
-result = await motor.run(RunTask(
-    prompt="Translate to English: 'Buongiorno mondo, come stai oggi?'",
-))
-print(result.output_text)
-# → "Good morning world, how are you today?"
-```
-
-### 2 · Attachments — the agent reads your files
+The agent walks the directory autonomously: globs files, reads the relevant ones, follows references, compiles a typed list of findings — all in one `await`.
 
 ```python
 from pathlib import Path
+from typing import Literal
+from pydantic import BaseModel
+
+class AuthIssue(BaseModel):
+    file: str
+    line_hint: str
+    severity: Literal["low", "medium", "high", "critical"]
+    quote: str           # verbatim from the source
+    fix: str
 
 result = await motor.run(RunTask(
-    prompt="Summarize attachments/article.pdf in 3 bullet points.",
-    tools=["Read"],
-    attachments=Path("./article.pdf"),       # symlinked into the run, agent-readable
+    prompt=(
+        "Audit our authentication code. Find every place that handles tokens, "
+        "passwords, or session state. Flag anything risky with severity, the "
+        "exact code line as quote, and a concrete fix."
+    ),
+    tools=["Read", "Glob", "Grep"],
+    attachments=Path("./src/"),
+    output_schema=list[AuthIssue],     # ← N findings, not one
+    max_turns=20,
 ))
-print(result.output_text)
+
+for issue in result.output_data:
+    print(f"[{issue.severity}] {issue.file} → {issue.fix}")
 ```
 
-Mix files and inline text in a single list:
+What happens behind that single `await`: the agent globs, greps, reads files it didn't know existed before, reasons, then commits to a validated list of `AuthIssue`. Try doing that with a single LLM call — you'd have to script the file walk yourself, parse the responses, retry on bad JSON, and pray.
+
+### 2 · Cross-reference multiple sources
+
+The agent reads several documents, finds connections you didn't ask about explicitly, and returns the contradictions you'd have spent an afternoon hunting.
 
 ```python
-attachments=[
-    Path("./report.pdf"),                    # real file → symlink
-    Path("./data/"),                         # whole dir → symlink
-    {"notes.md": "Prefer formal tone."},     # inline file written into the run
-]
+class Contradiction(BaseModel):
+    claim_a: str         # verbatim
+    source_a: str        # filename + page/section
+    claim_b: str         # verbatim
+    source_b: str
+    why: str             # why these conflict
+
+result = await motor.run(RunTask(
+    prompt=(
+        "Read every document in attachments/. Find pairs of claims that "
+        "contradict each other across sources. Cite verbatim both sides "
+        "and explain the conflict."
+    ),
+    tools=["Read", "Glob"],
+    attachments=Path("./research_papers/"),
+    output_schema=list[Contradiction],
+    max_turns=25,
+))
 ```
 
-### 3 · Skills — drop a folder, get a new capability
+### 3 · Orchestrate skills — the agent picks which to call
 
-A skill is a folder with a `SKILL.md` (frontmatter + instructions). The agent calls it via the `Skill` tool.
+Drop a folder of `SKILL.md` files. The agent reads their descriptions, decides which to use for the task, calls them in the right order, and composes the result.
 
 ```python
 result = await motor.run(RunTask(
-    prompt="Use the translate-it-en skill on: 'Buongiorno mondo'",
-    tools=["Skill"],                         # required to invoke any skill
-    skills=Path("./skills/"),                # folder containing translate-it-en/SKILL.md
+    prompt=(
+        "Prepare a 1-page risk brief on attachments/contract.pdf. "
+        "Decide yourself which skills to use."
+    ),
+    tools=["Read", "Skill"],
+    attachments=Path("./contract.pdf"),
+    skills=Path("./skills/"),          # contains: extract-entities, risk-score, summarize, ...
+    output_schema=RiskBrief,
+    max_turns=15,
 ))
 ```
 
-Multi-source + opt-out:
+The agent might call `extract-entities` on the contract, feed those into `risk-score`, then `summarize` the result — choosing the path itself from the SKILL.md descriptions. You write skills, the agent composes them.
 
-```python
-skills=[Path("./project_skills/"), Path("./shared_skills/")]
-disallowed_skills=["heavy-skill"]            # skip this one
-```
+### 4 · Decompose, decide, justify — typed end-to-end
 
-### 4 · Structured output — Pydantic out, never parse JSON again
+Compliance pattern: an obligation may have N sub-requirements, your candidate controls cover some and miss others. The agent decomposes, matches each sub-req to evidence, and produces a verdict with citations — schema-strict.
 
 ```python
 from typing import Literal
-from pydantic import BaseModel, Field
 
-class DocClass(BaseModel):
-    category: Literal["invoice", "contract", "email", "report"]
-    confidence: float = Field(ge=0, le=1)
-    reason: str
+class SubRequirement(BaseModel):
+    text: str
+    covered: bool
+    evidence: str        # which control + verbatim quote (or "none")
+
+class ComplianceVerdict(BaseModel):
+    verdict: Literal["FULL", "PARTIAL", "NONE"]
+    sub_requirements: list[SubRequirement]
+    overall_reasoning: str
 
 result = await motor.run(RunTask(
-    prompt="Classify attachments/doc.pdf",
+    prompt=(
+        "Obligation: {obligation_text}\n\n"
+        "Candidate controls:\n{controls_block}\n\n"
+        "Decompose the obligation into sub-requirements. For each one, "
+        "say if it's covered, by which control, with the exact quote. "
+        "Return a final verdict."
+    ).format(obligation_text=..., controls_block=...),
     tools=["Read"],
-    attachments=Path("./doc.pdf"),
-    output_schema=DocClass,                  # ← the agent commits to this shape
+    attachments=Path("./compliance_corpus/"),
+    output_schema=ComplianceVerdict,
+    max_turns=15,
 ))
 
-doc: DocClass = result.output_data           # ← Pydantic-validated instance
-print(doc.category)                          # "invoice"
-print(doc.confidence)                        # 0.94
+# result.output_data: a real ComplianceVerdict you can hand straight to a downstream system,
+# audit log, or human reviewer — every sub-req traceable to a verbatim citation.
 ```
 
-The agent runs its full multi-turn loop (reads the PDF, reasons, decides) and at the end emits a JSON that the CLI validates server-side against your schema. You get back a real Python object — not a string to parse, not a `dict` to validate yourself.
+This is **one Python `await`** doing what would otherwise be a 200-line orchestration script with prompt engineering, JSON parsing, retry loops, and schema-validation glue. The agent is the orchestration; your program holds the contract.
 
 ---
 
