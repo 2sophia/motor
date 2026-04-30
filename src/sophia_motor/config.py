@@ -61,9 +61,10 @@ DEFAULT_TOOL_DESCRIPTION_OVERRIDES: dict[str, str] = {
 }
 
 
-# Tools blocked by default. Mirrors the sophia-agent DISALLOWED_TOOLS list.
-# A compliance-reasoning agent has no business browsing the web, spawning
-# subagents, scheduling cron, opening notebooks, or hitting MCP auth flows.
+# Tools blocked by default. Mirrors the sophia-agent DISALLOWED_TOOLS list,
+# plus the deferred tools that the SDK CLI injects even when `tools=` is a
+# strict whitelist (Monitor, PushNotification, ScheduleWakeup — IDE-style
+# tools that have no place in a programmatic motor run).
 DEFAULT_DISALLOWED_TOOLS: list[str] = [
     # Web access
     "WebFetch", "WebSearch",
@@ -75,6 +76,8 @@ DEFAULT_DISALLOWED_TOOLS: list[str] = [
     # Worktrees / cron — out of scope for an agent run
     "EnterWorktree", "ExitWorktree",
     "CronCreate", "CronDelete", "CronList",
+    # IDE-style tools the CLI injects even with tools=["Read"] whitelist
+    "Monitor", "PushNotification", "ScheduleWakeup",
     # Notebooks
     "NotebookEdit",
     # Remote triggers
