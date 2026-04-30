@@ -7,6 +7,32 @@ from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 
 
+# Tools blocked by default. Mirrors the sophia-agent DISALLOWED_TOOLS list.
+# A compliance-reasoning agent has no business browsing the web, spawning
+# subagents, scheduling cron, opening notebooks, or hitting MCP auth flows.
+DEFAULT_DISALLOWED_TOOLS: list[str] = [
+    # Web access
+    "WebFetch", "WebSearch",
+    # Agentic / interactive — escape hatches the model would over-use
+    "AskUserQuestion",
+    "TodoWrite", "Agent",
+    "EnterPlanMode", "ExitPlanMode",
+    "TaskOutput", "TaskStop",
+    # Worktrees / cron — out of scope for an agent run
+    "EnterWorktree", "ExitWorktree",
+    "CronCreate", "CronDelete", "CronList",
+    # Notebooks
+    "NotebookEdit",
+    # Remote triggers
+    "RemoteTrigger",
+    # MCP auth flows (not configured here)
+    "mcp__claude_ai_Gmail__authenticate",
+    "mcp__claude_ai_Gmail__complete_authentication",
+    "mcp__claude_ai_Google_Calendar__authenticate",
+    "mcp__claude_ai_Google_Calendar__complete_authentication",
+]
+
+
 class MotorConfig(BaseModel):
     """All settings needed to instantiate a Motor.
 
@@ -77,6 +103,15 @@ class MotorConfig(BaseModel):
     # ── Run defaults (overridable per RunTask) ───────────────────────
     default_max_turns: int = 20
     default_timeout_seconds: int = 300
+    default_disallowed_tools: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_DISALLOWED_TOOLS),
+        description=(
+            "Tools blocked by default on every run unless overridden by "
+            "RunTask.disallowed_tools. Sensible defaults: web access, "
+            "agentic spawning, worktrees/cron/notebook/remote, MCP auth — "
+            "things a compliance-reasoning agent should never have."
+        ),
+    )
 
     model_config = {"arbitrary_types_allowed": True}
 

@@ -377,17 +377,31 @@ class Motor:
             env["ANTHROPIC_BASE_URL"] = self._proxy.base_url
             env["ANTHROPIC_AUTH_TOKEN"] = api_key
 
-        return ClaudeAgentOptions(
-            system_prompt=task.system_prompt,
-            allowed_tools=task.allowed_tools,
-            disallowed_tools=task.disallowed_tools or [],
-            max_turns=task.max_turns or self.config.default_max_turns,
-            permission_mode="bypassPermissions",
-            cwd=str(workspace_dir),
-            env=env,
-            plugins=[],
-            setting_sources=["project"],
-        )
+        # Resolve disallowed_tools: explicit None on the task → config default.
+        # Explicit empty list [] on the task → run truly unblocked (escape hatch
+        # for tests). Otherwise use what the task provides.
+        if task.disallowed_tools is None:
+            disallowed = list(self.config.default_disallowed_tools)
+        else:
+            disallowed = list(task.disallowed_tools)
+
+        # `tools` (hard whitelist) only set when explicitly provided.
+        # SDK signature: list[str] | ToolsPreset | None. Pass-through.
+        sdk_kwargs: dict = {
+            "system_prompt": task.system_prompt,
+            "allowed_tools": task.allowed_tools or [],
+            "disallowed_tools": disallowed,
+            "max_turns": task.max_turns or self.config.default_max_turns,
+            "permission_mode": "bypassPermissions",
+            "cwd": str(workspace_dir),
+            "env": env,
+            "plugins": [],
+            "setting_sources": ["project"],
+        }
+        if task.tools is not None:
+            sdk_kwargs["tools"] = task.tools
+
+        return ClaudeAgentOptions(**sdk_kwargs)
 
 
 def _tool_result_preview(block: ToolResultBlock) -> str:

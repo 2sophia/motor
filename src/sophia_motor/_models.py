@@ -10,17 +10,35 @@ from typing import Any, Optional
 class RunTask:
     """Single-shot input to `Motor.run()`.
 
+    Tool semantics — confirmed against the Claude Agent SDK source:
+
+      tools (HARD WHITELIST — what the model can SEE):
+        None       → SDK default preset (claude_code) → all built-ins loaded
+        []         → no tools at all
+        ["Read"]   → only Read is available; everything else does not exist
+
+      allowed_tools (PERMISSION SKIP — what auto-runs without prompting):
+        These tools execute automatically without an approval step. Does NOT
+        restrict — `allowed_tools=["Read"]` does NOT block Bash if Bash is in
+        the loaded `tools` set. Pair with `tools=` for true restriction.
+
+      disallowed_tools (HARD BLOCK — removed from the model's context):
+        Even if `tools=` would allow them. Use this for "never ever" tools
+        (WebFetch, agentic spawning, ...).
+
     Fields:
-      prompt:           the user prompt for the agent
+      prompt:           user prompt for the agent
       system_prompt:    optional system prompt; defaults to SDK default
-      allowed_tools:    whitelist of tool names; None = SDK default
-      disallowed_tools: blacklist of tool names; None = []
+      tools:            HARD whitelist (see above); None = SDK default
+      allowed_tools:    auto-allow set (no permission prompt); None = []
+      disallowed_tools: HARD block set; None = MotorConfig.default_disallowed_tools
       max_turns:        per-run override of MotorConfig.default_max_turns
       cwd_files:        files to seed under the run workspace before launch
                         ({relative_path: text_content})
     """
     prompt: str
     system_prompt: Optional[str] = None
+    tools: Optional[list[str]] = None
     allowed_tools: Optional[list[str]] = None
     disallowed_tools: Optional[list[str]] = None
     max_turns: Optional[int] = None
