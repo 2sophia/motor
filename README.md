@@ -283,16 +283,8 @@ Settings on the motor instance — set once at construction.
 | `guardrail` | `"strict" \| "permissive" \| "off"` | `"strict"` | Built-in PreToolUse hook (see *Guardrail* above) |
 | `disable_claude_md` | `bool` | `True` | Skip auto-loading repo `CLAUDE.md` / `MEMORY.md` into the agent's context |
 | `console_log_enabled` | `bool` | `True` | Colored console logger for events (off for silent runs) |
-| **Per-task defaults** (overridable by `RunTask`) | | | |
-| `default_system` | `str?` | `None` | Default system prompt |
-| `default_tools` | `list[str]?` | `None` | Default hard whitelist (`None` = SDK preset, `[]` = no tools) |
-| `default_allowed_tools` | `list[str]?` | `None` | Default permission-skip list |
-| `default_disallowed_tools` | `list[str]` | sensible blocklist | Default hard block (Web, Agent spawn, Cron, MCP auth, ...) |
-| `default_skills` | `Path \| str \| list?` | `None` | Default skills source(s) |
-| `default_attachments` | `Path \| dict \| list?` | `None` | Default attachments |
-| `default_disallowed_skills` | `list[str]` | `[]` | Default disallowed skill names |
-| `default_max_turns` | `int` | `20` | Default per-run turn cap |
-| `default_output_schema` | `type[BaseModel]?` | `None` | Default Pydantic class for structured output |
+
+`MotorConfig` also exposes a set of `default_*` fields (`default_system`, `default_tools`, `default_skills`, `default_output_schema`, ...) so the same task settings can be set once on the motor and varied per `RunTask`. See the [`MotorConfig` source](src/sophia_motor/config.py) if you need them.
 
 ### `RunTask`
 
