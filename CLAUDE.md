@@ -113,24 +113,23 @@ Ogni `motor.run(task)` crea:
 
 ## Comandi
 
-### Venv (TODO)
+### Venv
 
-Manca `python3.12-venv` di sistema → niente `.venv` dedicato per ora. Workaround temporaneo: si usa quello di sophia-agent.
+Setup one-time (richiede `python3.12-venv` di sistema, già installato):
 
 ```bash
-# Quando installiamo python3.12-venv:
-sudo apt install python3.12-venv      # one-time, richiede conferma di Alex
 cd /home/mwspace/htdocs/sophia-motor
 python3.12 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 ```
 
-### Run smoke test (con sophia venv, fino a venv dedicato)
+Da qui in poi tutto gira via `.venv/bin/python` o `.venv/bin/pytest`.
+
+### Run smoke test
 
 ```bash
 cd /home/mwspace/htdocs/sophia-motor
-ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=src \
-  /home/mwspace/htdocs/sophia-agent/.venv/bin/python tests/run_smoke.py
+ANTHROPIC_API_KEY=sk-ant-... .venv/bin/python tests/run_smoke.py
 ```
 
 Output atteso:
@@ -142,18 +141,18 @@ Output atteso:
 
 ```bash
 cd /home/mwspace/htdocs/sophia-motor
-PYTHONPATH=src /home/mwspace/htdocs/sophia-agent/.venv/bin/pytest tests/ -v
+.venv/bin/pytest tests/ -v
 ```
 
 Note:
-- `test_motor_starts_proxy_and_stops_clean` non chiama il modello, sempre eseguibile
+- `test_motor_starts_proxy_and_stops_clean` non chiama il modello, sempre eseguibile (~500ms)
 - `test_motor_runs_simple_read_task` skippa se `ANTHROPIC_API_KEY` manca
 
 ### Debug rapido (lifecycle proxy senza modello)
 
 ```bash
 cd /home/mwspace/htdocs/sophia-motor
-PYTHONPATH=src /home/mwspace/htdocs/sophia-agent/.venv/bin/python -c "
+.venv/bin/python -c "
 import asyncio
 from sophia_motor import Motor, MotorConfig
 
