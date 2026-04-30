@@ -13,6 +13,7 @@ Modifica le sezioni 👇 TODO 👇 per provare task diversi. Il motor:
   - persiste ogni request/response in `.runs/<run_id>/audit/`
   - stampa eventi e log a console (cyan/magenta)
   - blinda i tool secondo `tools=` / `disallowed_tools=`
+  - copia/scrive gli attachments in `.runs/<run_id>/attachments/`
   - ritorna RunResult con output_text + blocks + metadata + audit_dir
 
 Per pulire i runs accumulati:
@@ -24,28 +25,45 @@ Per pulire i runs accumulati:
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from sophia_motor import Motor, MotorConfig, RunTask
 
 
 # ── 👇 TODO: il prompt che l'agent deve eseguire ────────────────────────
 PROMPT = (
-    "Leggi il file `scratch/data.txt` (path relativo alla cwd) "
-    "e produci un riassunto di 2-3 frasi in italiano sui contenuti."
+    "Leggi il file `attachments/data.txt` e produci un riassunto di 2-3 "
+    "frasi in italiano sui contenuti normativi citati."
 )
 
-# ── 👇 TODO: file da seedare nel workspace prima del run ────────────────
-# Ogni chiave è un path relativo a cwd dell'agent. Il valore è il contenuto.
-# Lascia {} se il task non legge file.
-SEED_FILES: dict[str, str] = {
-    "scratch/data.txt": (
-        "ViViBanca pubblica trimestralmente i tassi soglia ai sensi della "
-        "legge 108/1996. Il tasso per il primo trimestre 2026 è 12.5% per "
-        "il credito al consumo. La policy interna PRGN000007 impone "
-        "l'aggiornamento dei contratti entro 15 giorni dalla pubblicazione "
-        "del decreto MEF."
-    ),
-}
+# ── 👇 TODO: attachments — cosa l'agent troverà sotto attachments/ ──────
+# Lista polimorfa, mix libero. Tre forme accettate:
+#
+#   1. Path / str → file reale  → copiato in attachments/<filename>
+#        Path("/data/regulation.pdf")  → attachments/regulation.pdf
+#
+#   2. Path / str → directory reale → copiata ricorsivamente
+#        Path("/data/policy_dir")  → attachments/policy_dir/...
+#
+#   3. dict[str, str] → file inline {relpath: contenuto}
+#        {"data.txt": "..."}              → attachments/data.txt
+#        {"sub/note.txt": "..."}          → attachments/sub/note.txt
+#
+# Pre-flight check automatico — se manca o non è leggibile, raise
+# PRIMA di consumare token.
+ATTACHMENTS: list = [
+    {
+        "data.txt": (
+            "ViViBanca pubblica trimestralmente i tassi soglia ai sensi "
+            "della legge 108/1996. Il tasso per il primo trimestre 2026 "
+            "è 12.5% per il credito al consumo. La policy interna "
+            "PRGN000007 impone l'aggiornamento dei contratti entro 15 "
+            "giorni dalla pubblicazione del decreto MEF."
+        ),
+    },
+    # esempio path reale (decommenta e cambia con un tuo PDF/MD reale):
+    # Path("/home/mwspace/htdocs/rgci-intelligence/.data/some_doc.pdf"),
+]
 
 # ── 👇 TODO: tool che il modello può usare (HARD whitelist) ─────────────
 # Esempi:
@@ -57,7 +75,7 @@ TOOLS: list[str] | None = ["Read"]
 
 # ── 👇 TODO: system prompt opzionale ────────────────────────────────────
 # Lascia None per il default SDK.
-SYSTEM_PROMPT: str | None = (
+SYSTEM: str | None = (
     "You are a compliance reasoning agent. Use relative paths, never "
     "absolute. Be concise."
 )
@@ -68,8 +86,8 @@ async def main() -> None:
     #   - api_key da env o ./.env
     #   - model = claude-opus-4-6
     #   - workspace_root = ./.runs
-    #   - proxy_enabled + audit_dump + console_log: ON
-    #   - default_disallowed_tools = sane defaults (no web, no agent spawning, ...)
+    #   - proxy + audit_dump + console_log: ON
+    #   - default_disallowed_tools = sane defaults (no web, no agent spawn, ...)
     config = MotorConfig()
 
     async with Motor(config) as motor:
@@ -82,10 +100,10 @@ async def main() -> None:
 
         result = await motor.run(RunTask(
             prompt=PROMPT,
-            system_prompt=SYSTEM_PROMPT,
+            system=SYSTEM,
             tools=TOOLS,
-            allowed_tools=TOOLS,  # mismo subset → niente permission prompt
-            cwd_files=SEED_FILES,
+            allowed_tools=TOOLS,
+            attachments=ATTACHMENTS,
             max_turns=10,
         ))
 

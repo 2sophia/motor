@@ -64,11 +64,13 @@ async def test_motor_runs_simple_read_task(api_key, tmp_path):
 
         result = await motor.run(RunTask(
             prompt=(
-                "Leggi il file scratch/sample.txt e produci un breve riassunto "
-                "in 2 frasi sui contenuti normativi citati. Rispondi in italiano."
+                "Leggi il file attachments/sample.txt e produci un breve "
+                "riassunto in 2 frasi sui contenuti normativi citati. "
+                "Rispondi in italiano."
             ),
+            tools=["Read"],
             allowed_tools=["Read"],
-            cwd_files={"scratch/sample.txt": SAMPLE_TEXT},
+            attachments=[{"sample.txt": SAMPLE_TEXT}],
             max_turns=5,
         ))
 

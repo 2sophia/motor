@@ -49,18 +49,18 @@ async def main() -> int:
     async with Motor(config) as motor:
         result = await motor.run(RunTask(
             prompt=(
-                "Leggi il file `scratch/sample.txt` (path relativo alla tua "
-                "working directory) e produci un breve riassunto in 2 frasi "
-                "sui contenuti normativi citati. Rispondi in italiano."
+                "Leggi il file `attachments/sample.txt` (path relativo alla "
+                "tua working directory) e produci un breve riassunto in 2 "
+                "frasi sui contenuti normativi citati. Rispondi in italiano."
             ),
-            system_prompt=(
+            system=(
                 "You are a compliance reasoning agent. All file paths you use "
                 "MUST be relative to the current working directory. Never use "
                 "absolute paths."
             ),
-            tools=["Read"],          # ← HARD whitelist: solo Read, niente altro
-            allowed_tools=["Read"],  # ← skip permission prompt
-            cwd_files={"scratch/sample.txt": SAMPLE_TEXT},
+            tools=["Read"],
+            allowed_tools=["Read"],
+            attachments=[{"sample.txt": SAMPLE_TEXT}],
             max_turns=5,
         ))
 

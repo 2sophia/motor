@@ -3,7 +3,38 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# attachments — polimorfo
+#
+# Lista di item che il motor materializza sotto <run>/attachments/
+# prima di lanciare l'agent. Ogni item può essere una di queste tre cose:
+#
+#   1. str | Path  →  path esistente di un FILE reale
+#         es. Path("/data/regulation.pdf")
+#         risultato: <run>/attachments/regulation.pdf  (shutil.copy2)
+#
+#   2. str | Path  →  path esistente di una DIRECTORY reale
+#         es. Path("/data/policy_dir/")
+#         risultato: <run>/attachments/policy_dir/...  (shutil.copytree)
+#
+#   3. dict[str, str]  →  file inline {relpath: content}
+#         es. {"note.txt": "ciao"}  oppure  {"sub/note.txt": "ciao"}
+#         risultato: <run>/attachments/note.txt  (write_text)
+#
+# Pre-flight automatico prima di chiamare il SDK:
+#   - path mancanti → FileNotFoundError
+#   - non file né dir → ValueError
+#   - non leggibile → PermissionError
+#   - dict key absolute o con `..` → ValueError
+#   - dict value non-str → TypeError
+#   - due item che destinano allo stesso path → ValueError (conflitto)
+#
+# Niente symlink: copia sempre. Audit bit-perfect, niente sandbox-escape.
+# ─────────────────────────────────────────────────────────────────────────
+AttachmentItem = Union[str, Path, dict[str, str]]
 
 
 @dataclass
@@ -25,24 +56,14 @@ class RunTask:
       disallowed_tools (HARD BLOCK — removed from the model's context):
         Even if `tools=` would allow them. Use this for "never ever" tools
         (WebFetch, agentic spawning, ...).
-
-    Fields:
-      prompt:           user prompt for the agent
-      system_prompt:    optional system prompt; defaults to SDK default
-      tools:            HARD whitelist (see above); None = SDK default
-      allowed_tools:    auto-allow set (no permission prompt); None = []
-      disallowed_tools: HARD block set; None = MotorConfig.default_disallowed_tools
-      max_turns:        per-run override of MotorConfig.default_max_turns
-      cwd_files:        files to seed under the run workspace before launch
-                        ({relative_path: text_content})
     """
     prompt: str
-    system_prompt: Optional[str] = None
+    system: Optional[str] = None
     tools: Optional[list[str]] = None
     allowed_tools: Optional[list[str]] = None
     disallowed_tools: Optional[list[str]] = None
     max_turns: Optional[int] = None
-    cwd_files: dict[str, str] = field(default_factory=dict)
+    attachments: list[AttachmentItem] = field(default_factory=list)
 
 
 @dataclass

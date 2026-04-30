@@ -83,18 +83,41 @@ Ogni `motor.run(task)` crea:
 
 ```
 <workspace_root>/<run_id>/
-  input.json           # parametri di input + config snapshot
-  scratch/             # file da seedare con task.cwd_files
+  input.json           # parametri di input + config snapshot + attachments manifest
+  attachments/         # file/dir reali copiati + file inline scritti (vedi sotto)
   outputs/             # file generati dall'agent (Write tool va qui)
   audit/
     request_001.json   # body POST /v1/messages
-    response_001.json  # body response (o .sse per stream)
+    response_001.sse   # response stream (.sse) o .json (sync)
     request_002.json
     ...
   trace.json           # blocks finali + metadata
 ```
 
-`run_id = run-<timestamp>-<8 hex>`. Workspace persistente — non viene cancellato a fine run (è il file system di audit). Per cleanup: cron o policy decisi a livello deployment.
+`run_id = run-<timestamp>-<8 hex>`. Workspace persistente — non viene cancellato a fine run (è il file system di audit). Per cleanup: `motor.clean_runs(...)` o `clean_runs(workspace_root, ...)`.
+
+### Attachments — un campo polimorfo
+
+`RunTask.attachments: list[str | Path | dict[str, str]]`. Tre forme accettate, mix libero:
+
+| Forma | Esempio | Risultato |
+|---|---|---|
+| `str` / `Path` di FILE reale | `Path("/data/reg.pdf")` | copia in `attachments/reg.pdf` |
+| `str` / `Path` di DIRECTORY reale | `Path("/data/policy/")` | copytree in `attachments/policy/` |
+| `dict[str, str]` (relpath → contenuto) | `{"note.txt": "ciao"}` | scrive `attachments/note.txt` |
+| dict con sub-path | `{"sub/note.txt": "x"}` | scrive `attachments/sub/note.txt` |
+
+**Pre-flight check** (errore prima di consumare token):
+- path mancante → `FileNotFoundError`
+- non file né dir → `ValueError`
+- non leggibile → `PermissionError`
+- dict key absolute o con `..` → `ValueError`
+- dict value non-str → `TypeError`
+- due item che destinano allo stesso path → `ValueError` (conflitto)
+
+**Niente symlink, copia sempre**. Audit bit-perfect (la versione del file usata è snapshotata) + niente sandbox-escape via link a `/etc/passwd`. Symlink possibili in futuro tramite wrapper esplicito `Symlink(path)` con guard PreToolUse adatto.
+
+**`input.json` registra il manifest**: `{target_path: source}`. Per file inline `source="<inline>"`, per path reali `source="/path/originale"`. Difesa BdI: dimostri esattamente da dove veniva il file che l'agent ha letto.
 
 ## Defaults del MotorConfig
 
@@ -226,11 +249,16 @@ async with Motor(config) as motor:
 
     result = await motor.run(RunTask(
         prompt="...",
-        system_prompt="...",          # optional
-        allowed_tools=["Read"],        # whitelist core SDK tools
-        disallowed_tools=[],           # blacklist
+        system="...",                  # optional system prompt
+        tools=["Read"],                # HARD whitelist (model sees only these)
+        allowed_tools=["Read"],        # auto-allow (skip permission prompt)
+        disallowed_tools=None,         # None=use config defaults, []=unblock all
         max_turns=10,
-        cwd_files={"scratch/note.txt": "..."},
+        attachments=[
+            Path("/data/regulation.pdf"),       # → attachments/regulation.pdf
+            Path("/data/policy_dir/"),          # → attachments/policy_dir/...
+            {"notes.txt": "..."},               # → attachments/notes.txt
+        ],
     ))
 
     # result.run_id          str

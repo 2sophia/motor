@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -149,10 +150,15 @@ class Motor:
             )
         api_key = self.config.require_api_key()
 
+        # Pre-flight validation BEFORE we mint a run_id, set up workspace,
+        # bind the proxy, or call the SDK. Better to fail loud here than to
+        # spend tokens on a doomed run.
+        _validate_attachments(task.attachments)
+
         async with self._run_lock:
             run_id = self._mint_run_id()
-            workspace_dir, audit_dir = self._setup_workspace(run_id, task)
-            self._persist_input(workspace_dir, run_id, task)
+            workspace_dir, audit_dir, attachments_manifest = self._setup_workspace(run_id, task)
+            self._persist_input(workspace_dir, run_id, task, attachments_manifest)
 
             if self._proxy is not None:
                 self._proxy.set_active_run(run_id, audit_dir)
@@ -323,30 +329,39 @@ class Motor:
     def _mint_run_id() -> str:
         return f"run-{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
-    def _setup_workspace(self, run_id: str, task: RunTask) -> tuple[Path, Path]:
+    def _setup_workspace(self, run_id: str, task: RunTask) -> tuple[Path, Path, dict[str, str]]:
+        """Create workspace dirs and materialize attachments.
+
+        Returns (workspace_dir, audit_dir, attachments_manifest). Attachments
+        are validated by `_validate_attachments` before this is called.
+        """
         workspace_dir = self.config.workspace_root / run_id
         audit_dir = workspace_dir / "audit"
-        scratch_dir = workspace_dir / "scratch"
+        attachments_dir = workspace_dir / "attachments"
         outputs_dir = workspace_dir / "outputs"
-        for d in (workspace_dir, audit_dir, scratch_dir, outputs_dir):
+        for d in (workspace_dir, audit_dir, attachments_dir, outputs_dir):
             d.mkdir(parents=True, exist_ok=True)
-        # Seed files
-        for rel_path, content in task.cwd_files.items():
-            target = workspace_dir / rel_path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
-        return workspace_dir, audit_dir
 
-    def _persist_input(self, workspace_dir: Path, run_id: str, task: RunTask) -> None:
+        manifest = _materialize_attachments(attachments_dir, task.attachments)
+        return workspace_dir, audit_dir, manifest
+
+    def _persist_input(
+        self,
+        workspace_dir: Path,
+        run_id: str,
+        task: RunTask,
+        attachments_manifest: dict[str, str],
+    ) -> None:
         dump = {
             "run_id": run_id,
             "task": {
                 "prompt": task.prompt,
-                "system_prompt": task.system_prompt,
+                "system": task.system,
+                "tools": task.tools,
                 "allowed_tools": task.allowed_tools,
                 "disallowed_tools": task.disallowed_tools,
                 "max_turns": task.max_turns or self.config.default_max_turns,
-                "cwd_files": list(task.cwd_files.keys()),
+                "attachments": attachments_manifest,
             },
             "config": {
                 "model": self.config.model,
@@ -417,7 +432,7 @@ class Motor:
         # `tools` (hard whitelist) only set when explicitly provided.
         # SDK signature: list[str] | ToolsPreset | None. Pass-through.
         sdk_kwargs: dict = {
-            "system_prompt": task.system_prompt,
+            "system_prompt": task.system,
             "allowed_tools": task.allowed_tools or [],
             "disallowed_tools": disallowed,
             "max_turns": task.max_turns or self.config.default_max_turns,
@@ -443,3 +458,110 @@ def _tool_result_preview(block: ToolResultBlock) -> str:
             if isinstance(c, dict) and c.get("type") == "text":
                 return (c.get("text") or "")[:200]
     return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# attachments — pre-flight validation + materialization
+#
+# `_validate_attachments` runs BEFORE any state mutation: no run_id minted,
+# no workspace created, no proxy bound, no SDK called. The dev gets a clean
+# error and can fix the input. No tokens consumed on a doomed run.
+#
+# `_materialize_attachments` runs only after validation succeeds. It copies
+# real files/dirs and writes inline files into <run>/attachments/.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _validate_attachments(items: list) -> None:
+    """Pre-flight check. Raise with a specific exception type per cause."""
+    seen_targets: dict[str, str] = {}  # target_rel → source_repr (for conflict msg)
+    for i, item in enumerate(items):
+        if isinstance(item, dict):
+            if not item:
+                raise ValueError(f"attachments[{i}]: empty dict is not allowed")
+            for rel_path, content in item.items():
+                if not isinstance(rel_path, str) or not rel_path:
+                    raise ValueError(
+                        f"attachments[{i}]: dict key must be a non-empty string, "
+                        f"got {rel_path!r}"
+                    )
+                if not isinstance(content, str):
+                    raise TypeError(
+                        f"attachments[{i}]: dict value for {rel_path!r} must be str, "
+                        f"got {type(content).__name__}"
+                    )
+                if rel_path.startswith("/"):
+                    raise ValueError(
+                        f"attachments[{i}]: inline relpath {rel_path!r} must be "
+                        f"relative, not absolute"
+                    )
+                parts = Path(rel_path).parts
+                if ".." in parts:
+                    raise ValueError(
+                        f"attachments[{i}]: inline relpath {rel_path!r} must not "
+                        f"contain '..' (sandbox escape)"
+                    )
+                norm = str(Path(rel_path))
+                if norm in seen_targets:
+                    raise ValueError(
+                        f"attachments[{i}]: target {norm!r} conflicts with earlier "
+                        f"attachment from {seen_targets[norm]!r}"
+                    )
+                seen_targets[norm] = "<inline>"
+        elif isinstance(item, (str, Path)):
+            src = Path(item)
+            if not src.exists():
+                raise FileNotFoundError(
+                    f"attachments[{i}]: path {str(src)!r} does not exist"
+                )
+            if not (src.is_file() or src.is_dir()):
+                raise ValueError(
+                    f"attachments[{i}]: path {str(src)!r} is neither a file nor "
+                    f"a directory"
+                )
+            if not os.access(src, os.R_OK):
+                raise PermissionError(
+                    f"attachments[{i}]: path {str(src)!r} is not readable"
+                )
+            target_name = src.name
+            if not target_name:
+                raise ValueError(
+                    f"attachments[{i}]: cannot derive target name from path "
+                    f"{str(src)!r}"
+                )
+            if target_name in seen_targets:
+                raise ValueError(
+                    f"attachments[{i}]: target name {target_name!r} (from "
+                    f"{str(src)!r}) conflicts with earlier attachment from "
+                    f"{seen_targets[target_name]!r}"
+                )
+            seen_targets[target_name] = str(src)
+        else:
+            raise TypeError(
+                f"attachments[{i}]: unsupported type {type(item).__name__}; "
+                f"must be str | Path | dict[str, str]"
+            )
+
+
+def _materialize_attachments(attachments_dir: Path, items: list) -> dict[str, str]:
+    """Copy/write all attachments into `attachments_dir`.
+
+    Returns a manifest {final_relative_path → source_repr} suitable for
+    persistence in input.json (audit trail).
+    """
+    manifest: dict[str, str] = {}
+    for item in items:
+        if isinstance(item, dict):
+            for rel_path, content in item.items():
+                target = attachments_dir / rel_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+                manifest[str(Path(rel_path))] = "<inline>"
+        else:
+            src = Path(item)
+            target = attachments_dir / src.name
+            if src.is_file():
+                shutil.copy2(src, target)
+            else:  # src.is_dir() guaranteed by validation
+                shutil.copytree(src, target)
+            manifest[src.name] = str(src)
+    return manifest
