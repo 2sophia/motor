@@ -19,13 +19,17 @@ classifiers = [
 ]
 
 dependencies = [
-    "claude-agent-sdk>=0.1.58",
-    "anthropic>=0.97.0",
-    "fastapi>=0.115",
-    "uvicorn>=0.30",
-    "httpx>=0.27",
-    "pydantic>=2.0",
-    "pydantic-settings>=2.0",
+    # SDK pinned to the exact version we tested with. Bump deliberately, after
+    # re-running the live smoke test. v0.1.x is pre-1.0 → patch versions can
+    # carry breaking changes.
+    "claude-agent-sdk==0.1.71",
+    # Proxy + HTTP forwarding. Pinned to current installed versions for
+    # reproducible builds. The SDK does NOT depend on the `anthropic` python
+    # client — we forward via httpx directly.
+    "fastapi==0.136.1",
+    "uvicorn==0.46.0",
+    "httpx==0.28.1",
+    "pydantic==2.13.3",
 ]
 
 [project.optional-dependencies]
