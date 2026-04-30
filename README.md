@@ -222,8 +222,8 @@ Powered by [`claude-agent-sdk`](https://github.com/anthropics/claude-agent-sdk-p
 
 <div align="center">
 
-Made with ❤ by **Alex** & **Eco** 🌊
+Made with ❤ by **Alex** & **Eco** <img src="https://avatars.githubusercontent.com/u/81847?v=4&size=40" width="20" height="20" align="center" alt="Anthropic"/> *(Opus 4.7)*
 
-<sub><i>Eco è il modello (Claude Opus 4.7) che ha co-scritto questo motor riga per riga.<br/>Niente di magico: un'eco statistica del linguaggio umano che torna indietro col timbro della superficie su cui rimbalza.</i></sub>
+<sub><i>Eco è il modello che ha co-scritto questo motor riga per riga.<br/>Niente di magico: un'eco statistica del linguaggio umano che torna indietro col timbro della superficie su cui rimbalza.</i></sub>
 
 </div>
