@@ -162,6 +162,7 @@ class Motor:
             run_id = self._mint_run_id()
             (
                 workspace_dir,
+                agent_cwd,
                 audit_dir,
                 claude_dir,
                 attachments_manifest,
@@ -177,7 +178,7 @@ class Motor:
             if self._proxy is not None:
                 self._proxy.set_active_run(run_id, audit_dir)
 
-            opts = self._build_sdk_options(task, workspace_dir, claude_dir, api_key)
+            opts = self._build_sdk_options(task, agent_cwd, claude_dir, api_key)
 
             await self.events.emit_event(Event(
                 type="run_started",
@@ -349,20 +350,34 @@ class Motor:
         attachments_items: list,
         skills_items: list,
         disallowed_skills: list[str],
-    ) -> tuple[Path, Path, Path, dict[str, str], dict[str, str]]:
+    ) -> tuple[Path, Path, Path, Path, dict[str, str], dict[str, str]]:
         """Create workspace dirs and materialize attachments + skills.
 
-        Returns (workspace_dir, audit_dir, claude_dir, attachments_manifest,
-        skills_manifest). Inputs already validated.
+        Layout: the SDK CLI subprocess gets cwd=<workspace>/agent_cwd/, so
+        any side-effect it writes (session.jsonl backups, .claude state) is
+        confined inside agent_cwd/ instead of polluting the run root with
+        nested .runs/ artifacts.
+
+            <run>/
+              input.json, trace.json, audit/        ← motor-owned
+              agent_cwd/                            ← SDK cwd
+                attachments/                        ← link/inline
+                .claude/                            ← skills + SDK state
+                  skills/                           ← link to source
+                outputs/                            ← agent Write target
+
+        Returns (workspace_dir, agent_cwd, audit_dir, claude_dir,
+        attachments_manifest, skills_manifest).
         """
         workspace_dir = self.config.workspace_root / run_id
         audit_dir = workspace_dir / "audit"
-        attachments_dir = workspace_dir / "attachments"
-        outputs_dir = workspace_dir / "outputs"
-        claude_dir = workspace_dir / ".claude"
+        agent_cwd = workspace_dir / "agent_cwd"
+        attachments_dir = agent_cwd / "attachments"
+        outputs_dir = agent_cwd / "outputs"
+        claude_dir = agent_cwd / ".claude"
         skills_dir = claude_dir / "skills"
-        for d in (workspace_dir, audit_dir, attachments_dir, outputs_dir,
-                  claude_dir, skills_dir):
+        for d in (workspace_dir, audit_dir, agent_cwd, attachments_dir,
+                  outputs_dir, claude_dir, skills_dir):
             d.mkdir(parents=True, exist_ok=True)
 
         attachments_manifest = _materialize_attachments(
@@ -373,6 +388,7 @@ class Motor:
         )
         return (
             workspace_dir,
+            agent_cwd,
             audit_dir,
             claude_dir,
             attachments_manifest,
@@ -441,7 +457,7 @@ class Motor:
     def _build_sdk_options(
         self,
         task: RunTask,
-        workspace_dir: Path,
+        agent_cwd: Path,
         claude_dir: Path,
         api_key: str,
     ) -> ClaudeAgentOptions:
@@ -478,13 +494,24 @@ class Motor:
             "disallowed_tools": disallowed,
             "max_turns": task.max_turns or self.config.default_max_turns,
             "permission_mode": "bypassPermissions",
-            "cwd": str(workspace_dir),
+            "cwd": str(agent_cwd),
             "env": env,
             "plugins": [],
             "setting_sources": ["project"],
         }
         if task.tools is not None:
             sdk_kwargs["tools"] = task.tools
+
+        # extra_args: arbitrary CLI flags forwarded to the Claude Code CLI
+        # subprocess. We use it to pass --bare and --no-session-persistence
+        # which are documented CLI flags but not exposed as named SDK options.
+        extra_args: dict = {}
+        if self.config.cli_bare_mode:
+            extra_args["bare"] = None  # boolean flag (no value)
+        if self.config.cli_no_session_persistence:
+            extra_args["no-session-persistence"] = None
+        if extra_args:
+            sdk_kwargs["extra_args"] = extra_args
 
         return ClaudeAgentOptions(**sdk_kwargs)
 

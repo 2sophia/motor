@@ -182,6 +182,28 @@ class MotorConfig(BaseModel):
         description="Register the default console logger for events and logs.",
     )
 
+    # ── CLI flags ────────────────────────────────────────────────────
+    cli_bare_mode: bool = Field(
+        default=False,
+        description=(
+            "Pass --bare to the Claude CLI subprocess. WARNING: in bare "
+            "mode skills resolve as slash-commands (/skill-name) instead "
+            "of as the Skill tool. The model can no longer invoke them "
+            "via tool_use. Verified empirically — output becomes a literal "
+            "`<tool_call>...` inline string instead of a real tool_use "
+            "block. Default OFF; enable ONLY for skill-less runs."
+        ),
+    )
+    cli_no_session_persistence: bool = Field(
+        default=True,
+        description=(
+            "Pass --no-session-persistence to the Claude CLI subprocess: "
+            "no session jsonl written under <CLAUDE_CONFIG_DIR>/projects/. "
+            "Each motor run is isolated with its own audit dir; resume "
+            "across runs is not a use case for this motor."
+        ),
+    )
+
     # ── Run defaults (overridable per RunTask) ───────────────────────
     default_max_turns: int = 20
     default_timeout_seconds: int = 300
