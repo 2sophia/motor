@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sophia-motor"
 version = "0.0.1"
 description = "Programmable, instanceable agent motor — wraps Claude Agent SDK with proxy gateway, audit log, and event bus. Built for Sophia/RGCI compliance reasoning."
-authors = [{name = "Aleksandr Ivanovitch", email = "alex@mwspace.com"}]
+authors = [{name = "Sophia AI", email = "tech@2sophia.ai"}]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.12"
