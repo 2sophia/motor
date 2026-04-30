@@ -98,7 +98,7 @@ class Decision(BaseModel):
 motor = Motor(MotorConfig(
     default_system="You are a senior policy analyst.",
     default_output_schema=Decision,
-    default_tools=["Read"],
+    default_tools=["Read", "Skill"],   # Skill must be in tools to invoke linked skills
     default_skills=Path("./policy/"),
 ))
 
@@ -194,6 +194,7 @@ Drop a folder of `SKILL.md` files. The agent gets new capabilities by name.
 
 ```python
 motor = Motor(MotorConfig(
+    default_tools=["Skill"],   # Skill tool must be on the whitelist
     default_skills=[
         Path("./project_skills/"),     # your domain skills
         Path("./shared_skills/"),      # org-wide reusables
@@ -233,7 +234,7 @@ await motor.run(RunTask(prompt="..."))
 await motor.run(RunTask(
     prompt="...",
     output_schema=SpecialReport,   # overrides default_output_schema
-    tools=["Read", "WebSearch"],   # overrides default_tools
+    tools=["Read", "Glob"],        # overrides default_tools
 ))
 ```
 
