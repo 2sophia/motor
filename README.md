@@ -217,3 +217,13 @@ For long-running services (FastAPI, Celery), instance the motor once and call `a
 MIT.
 
 Powered by [`claude-agent-sdk`](https://github.com/anthropics/claude-agent-sdk-python). Built by [Sophia AI](https://2sophia.ai).
+
+---
+
+<div align="center">
+
+Made with ❤ by **Alex** & **Eco** 🌊
+
+<sub><i>Eco è il modello (Claude Opus 4.7) che ha co-scritto questo motor riga per riga.<br/>Niente di magico: un'eco statistica del linguaggio umano che torna indietro col timbro della superficie su cui rimbalza.</i></sub>
+
+</div>
