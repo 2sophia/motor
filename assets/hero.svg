@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 280" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+
+  <!-- gradient definitions -->
+  <defs>
+    <linearGradient id="agentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <radialGradient id="agentGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#8b5cf6" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.04"/>
+    </radialGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- ============================================================ -->
+  <!-- Column 1: INPUT                                                -->
+  <!-- ============================================================ -->
+  <g transform="translate(20, 50)" filter="url(#softShadow)">
+    <rect x="0" y="0" width="220" height="160" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+    <text x="20" y="32" font-size="13" font-weight="700" fill="#475569">RunTask</text>
+
+    <!-- prompt -->
+    <text x="20" y="62" font-size="12" fill="#64748b">prompt:</text>
+    <text x="74" y="62" font-size="12" fill="#0f172a">"assess..."</text>
+
+    <!-- output_schema -->
+    <text x="20" y="86" font-size="12" fill="#64748b">schema:</text>
+    <text x="74" y="86" font-size="12" fill="#0f172a">Decision</text>
+
+    <!-- tools -->
+    <text x="20" y="110" font-size="12" fill="#64748b">tools:</text>
+    <text x="74" y="110" font-size="12" fill="#0f172a">[Read]</text>
+
+    <!-- skills -->
+    <text x="20" y="134" font-size="12" fill="#64748b">skills:</text>
+    <text x="74" y="134" font-size="12" fill="#0f172a">policy/</text>
+  </g>
+  <text x="130" y="240" font-size="11" font-weight="600" fill="#64748b" text-anchor="middle" letter-spacing="2">INPUT</text>
+
+  <!-- arrow → -->
+  <g transform="translate(245, 130)">
+    <line x1="0" y1="0" x2="60" y2="0" stroke="#94a3b8" stroke-width="2"/>
+    <polygon points="60,-5 70,0 60,5" fill="#94a3b8"/>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- Column 2: AGENT (the magic box)                                -->
+  <!-- ============================================================ -->
+  <g transform="translate(320, 30)">
+    <!-- glow -->
+    <ellipse cx="120" cy="100" rx="150" ry="120" fill="url(#agentGlow)"/>
+    <!-- box -->
+    <rect x="0" y="0" width="240" height="200" rx="20"
+          fill="url(#agentGrad)" filter="url(#softShadow)"/>
+
+    <text x="120" y="35" font-size="14" font-weight="700"
+          fill="#ffffff" text-anchor="middle" letter-spacing="1">AGENT LOOP</text>
+
+    <!-- inner panel — the agent's "thinking space" -->
+    <rect x="20" y="55" width="200" height="120" rx="10"
+          fill="#ffffff" fill-opacity="0.92"/>
+
+    <!-- step 1 -->
+    <circle cx="36" cy="76" r="3.5" fill="#8b5cf6"/>
+    <text x="50" y="80" font-size="12" fill="#1e293b">read policy.md</text>
+
+    <!-- step 2 -->
+    <circle cx="36" cy="100" r="3.5" fill="#8b5cf6"/>
+    <text x="50" y="104" font-size="12" fill="#1e293b">reason · cross-ref</text>
+
+    <!-- step 3 -->
+    <circle cx="36" cy="124" r="3.5" fill="#8b5cf6"/>
+    <text x="50" y="128" font-size="12" fill="#1e293b">read case.md</text>
+
+    <!-- step 4 -->
+    <circle cx="36" cy="148" r="3.5" fill="#06b6d4"/>
+    <text x="50" y="152" font-size="12" fill="#1e293b" font-weight="600">commit to schema</text>
+
+    <!-- "multi-turn" badge -->
+    <text x="120" y="195" font-size="10" fill="#ffffff" text-anchor="middle"
+          letter-spacing="1.5" font-weight="600">MULTI-TURN · TOOLS · SKILLS</text>
+  </g>
+  <text x="440" y="240" font-size="11" font-weight="600" fill="#64748b" text-anchor="middle" letter-spacing="2">AGENT</text>
+
+  <!-- arrow → -->
+  <g transform="translate(565, 130)">
+    <line x1="0" y1="0" x2="60" y2="0" stroke="#94a3b8" stroke-width="2"/>
+    <polygon points="60,-5 70,0 60,5" fill="#94a3b8"/>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- Column 3: TYPED OUTPUT                                         -->
+  <!-- ============================================================ -->
+  <g transform="translate(640, 50)" filter="url(#softShadow)">
+    <rect x="0" y="0" width="220" height="160" rx="12" fill="#ffffff" stroke="#06b6d4" stroke-width="1.5"/>
+    <text x="20" y="32" font-size="13" font-weight="700" fill="#0891b2">Decision</text>
+
+    <!-- verdict -->
+    <text x="20" y="62" font-size="12" fill="#64748b">verdict:</text>
+    <text x="80" y="62" font-size="12" fill="#0f172a" font-weight="600">"APPROVE"</text>
+
+    <!-- reasoning -->
+    <text x="20" y="86" font-size="12" fill="#64748b">reasoning:</text>
+    <text x="92" y="86" font-size="12" fill="#0f172a">"Risk &lt; 0.3..."</text>
+
+    <!-- confidence -->
+    <text x="20" y="110" font-size="12" fill="#64748b">confidence:</text>
+    <text x="100" y="110" font-size="12" fill="#0f172a">0.92</text>
+
+    <!-- separator -->
+    <line x1="20" y1="124" x2="200" y2="124" stroke="#e2e8f0" stroke-dasharray="2,3"/>
+
+    <!-- BaseModel hint -->
+    <text x="20" y="144" font-size="10" fill="#94a3b8" font-style="italic">↑ instance of pydantic.BaseModel</text>
+  </g>
+  <text x="750" y="240" font-size="11" font-weight="600" fill="#64748b" text-anchor="middle" letter-spacing="2">TYPED OUTPUT</text>
+
+</svg>

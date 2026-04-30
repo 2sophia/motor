@@ -21,6 +21,10 @@ Pretty? Sometimes. Reliable enough to ship behind your API? Not really.
 
 **Sophia Motor** turns it into a **typed Python function**.
 
+<div align="center">
+  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/hero.svg" alt="Sophia Motor — input, agent loop, typed output" width="100%"/>
+</div>
+
 ```python
 result = await motor.run(RunTask(
     prompt="Should we approve this loan request? Reasons attached.",
