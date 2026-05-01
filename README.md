@@ -16,11 +16,11 @@
 
 </div>
 
+---
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/demo.gif" alt="sophia-motor demo: console + tools + file write + chat memory" width="900"/>
 </p>
-
----
 
 ## Why
 
