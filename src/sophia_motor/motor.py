@@ -190,7 +190,10 @@ class Motor:
             if self._proxy is not None:
                 self._proxy.set_active_run(run_id, audit_dir)
 
-            opts = self._build_sdk_options(task, agent_cwd, claude_dir, api_key)
+            opts = self._build_sdk_options(
+                task, agent_cwd, claude_dir, api_key,
+                skills_allowed=list(skills_manifest.keys()),
+            )
 
             await self.events.emit_event(Event(
                 type="run_started",
@@ -551,6 +554,7 @@ class Motor:
         agent_cwd: Path,
         claude_dir: Path,
         api_key: str,
+        skills_allowed: Optional[list[str]] = None,
     ) -> ClaudeAgentOptions:
         env: dict[str, str] = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -614,6 +618,15 @@ class Motor:
         }
         if task.tools is not None:
             sdk_kwargs["tools"] = task.tools
+
+        # Pass an explicit `skills` whitelist to the SDK whenever we know
+        # which skills the run materialised. The Claude CLI ships a set
+        # of bundled skills (update-config, simplify, review, ...) that
+        # would otherwise leak into the agent's reminder catalogue —
+        # nothing the dev configured, just SDK noise. An explicit list
+        # (even an empty one) restricts the Skill tool to that set.
+        if skills_allowed is not None:
+            sdk_kwargs["skills"] = list(skills_allowed)
 
         # Built-in PreToolUse hook — sandbox the agent based on config.guardrail.
         # The hook matches on every tool name (matcher=None catches all) and
