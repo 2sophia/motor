@@ -153,6 +153,31 @@ class Motor:
         self._started = False
         await self.events.log("INFO", "motor stopped")
 
+    # ── interactive console ──────────────────────────────────────────
+
+    async def console(self) -> None:
+        """Open an interactive REPL bound to this Motor.
+
+        Renders the agent's stream live (text deltas, tool use lifecycle,
+        file outputs) with `rich`, reads user input via `prompt-toolkit`
+        with history + multiline + slash-command autocomplete. Pre-configure
+        the motor with `default_*` (tools, system, attachments, skills, …)
+        and the console will use them on every turn — type prompts and watch
+        the agent work.
+
+        Slash commands inside the console: `/help`, `/exit`, `/files`,
+        `/audit`, `/clear`. `Ctrl+C` interrupts the running task without
+        quitting the console; `Ctrl+D` quits.
+
+        Requires the `[console]` extras:
+            pip install sophia-motor[console]
+        """
+        # Lazy import so the console deps (rich, prompt-toolkit) are only
+        # required for users who actually call this method.
+        from ._console import run_console
+
+        await run_console(self)
+
     # ── interrupt ────────────────────────────────────────────────────
 
     async def interrupt(self, run_id: Optional[str] = None) -> bool:
