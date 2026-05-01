@@ -77,6 +77,41 @@ For long-running services (FastAPI, Celery), instance the motor once and call `a
 
 ---
 
+## Cost & control: pay for what you actually use
+
+The Claude Agent SDK out of the box ships every built-in tool, the entire bundled-skill catalogue, an identity block, and a billing header — on every single call. For a one-shot question this means thousands of cache-creation tokens you didn't ask for.
+
+`sophia-motor` is opinionated: **zero tools, zero skills, zero SDK noise** unless you explicitly opt in. Same model, same upstream API — the bill drops.
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/cost-savings.svg" alt="cost comparison: SDK default vs sophia-motor on the same minimal task" width="100%"/>
+</div>
+
+### The same call, two bills
+
+| What runs | Claude Agent SDK (default) | sophia-motor (`Motor()`) |
+|---|---|---|
+| Tools exposed to model | every built-in (Read, Bash, WebFetch, …) | **0** — you list them when you need them |
+| Skills exposed to model | the SDK's bundled catalogue (update-config, simplify, loop, claude-api, init, review, security-review, …) | **0** — only the skills you linked |
+| System blocks injected | SDK identity + billing header + noise reminders | stripped at the proxy |
+| Cost on a 1-turn no-tool prompt | **$0.0498** | **$0.0030** (–94%) |
+| Where you opt in | nowhere (it's all on by default) | `RunTask(tools=[...], skills=Path(...))` per call, or `MotorConfig.default_*` once |
+
+The numbers are from a live run measured 2026-05-01, `claude-opus-4-6`, same prompt and same provider — the only thing that changes is what the motor doesn't ship to the model.
+
+### Why you might *still* pick the raw SDK
+
+The motor isn't a free lunch. Trade-offs to know about:
+
+- **Pre-1.0**: API still moves between minor versions. If you need a frozen contract, pin to an exact `sophia-motor==X.Y.Z`.
+- **Audit trail is mandatory**: every run lives in `~/.sophia-motor/runs/<run_id>/` (request/response dumps + workspace). That's a feature for compliance/review and a footprint you'll want to manage. `clean_runs(...)` is shipped — wire it into your lifecycle if you produce many runs.
+- **Proxy in-process**: a local FastAPI + Uvicorn proxy boots on the first run (≈500 ms once, then idle). That's the price of audit dump + selective system-reminder strip + per-turn events.
+- **Strict guardrail by default**: `Read`/`Edit` lexically restricted to the run's cwd, `Write` to `outputs/`, `Bash` blocks dev/admin commands. If you intentionally need an unrestricted agent, set `MotorConfig(guardrail="permissive")` or `"off"`.
+
+If your workload is "one prompt, one answer, no tools, no audit" — congrats, the SDK already does that, and you'll pay $0.05 per call instead of $0.003. For everything else (multi-turn, structured output, skills, attachments, parallel runs, defendable audit), the motor is the cheaper *and* the cleaner choice.
+
+---
+
 ## Examples
 
 Things you **cannot** ship with a single LLM call. Same `motor` instance, different RunTask.
