@@ -17,8 +17,11 @@ Class API:
             attachments={"note.txt": "..."},
         ))
 
-A single Motor instance handles one run at a time (the proxy is bound to the
-active run for audit-dump tagging). For parallelism, instantiate N Motors.
+A single Motor instance can drive any number of concurrent runs: the
+proxy multiplexes them via per-run path prefixes. Just `await motor.run(...)`
+or iterate `motor.stream(...)` from as many tasks as you want — fan out with
+`asyncio.gather`, drive from a FastAPI endpoint, whatever — they execute
+in parallel without serialization.
 """
 from __future__ import annotations
 

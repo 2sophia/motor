@@ -400,15 +400,20 @@ await motor.run(RunTask(
 
 ## Concurrency
 
-A single motor handles **one run at a time** (serialized internally). Call `motor.run(...)` from any number of FastAPI
-endpoints — they queue safely.
-
-For parallel work: instantiate N motors.
+One motor, N runs in parallel. The proxy multiplexes runs via per-run path prefixes — call `motor.run(...)` /
+`motor.stream(...)` from as many tasks as you want, they execute concurrently.
 
 ```python
-m1, m2 = Motor(), Motor()
-a, b = await asyncio.gather(m1.run(task_a), m2.run(task_b))
+motor = Motor()
+results = await asyncio.gather(
+    motor.run(task_a),
+    motor.run(task_b),
+    motor.run(task_c),
+)
 ```
+
+This is exactly what a chat backend does: instantiate one motor, hand it whatever `RunTask` each HTTP request brings,
+let the framework drive concurrency.
 
 ## Guardrail
 
