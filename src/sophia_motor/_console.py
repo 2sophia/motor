@@ -51,7 +51,9 @@ def _import_or_raise() -> dict[str, Any]:
     }
 
 
-_SLASH_COMMANDS = ["/help", "/exit", "/quit", "/q", "/files", "/audit", "/clear"]
+_SLASH_COMMANDS = [
+    "/help", "/exit", "/quit", "/q", "/files", "/audit", "/clear", "/new",
+]
 
 
 HELP_TEXT = """\
@@ -59,6 +61,7 @@ HELP_TEXT = """\
 
   [cyan]/help[/cyan]       Show this help
   [cyan]/exit[/cyan]       Quit the console (also: /q, /quit, Ctrl+D)
+  [cyan]/new[/cyan]        Reset the chat — same workspace, new SDK session
   [cyan]/files[/cyan]      List output files of the last run + persist hint
   [cyan]/audit[/cyan]      Print audit dump path of the last run
   [cyan]/clear[/cyan]      Clear screen
@@ -76,7 +79,7 @@ async def run_console(motor: "Motor") -> None:  # noqa: PLR0915
     """Open a chat-like REPL bound to `motor`.
 
     Blocks until the user issues `/exit` (or hits Ctrl+D). Each input
-    triggers a `motor.stream(RunTask(prompt=...))` whose chunks are
+    triggers a `chat.stream(prompt)` whose chunks are
     rendered live; `motor`'s configured `default_*` (tools, system,
     attachments, skills, …) drive the runs, so the dev pre-configures
     a "ready-to-talk" motor and then just types prompts.
@@ -107,7 +110,6 @@ async def run_console(motor: "Motor") -> None:  # noqa: PLR0915
         ToolUseFinalizedChunk,
         ToolUseStartChunk,
     )
-    from ._models import RunTask
 
     # Motor's default console logger and event printer would clutter
     # the TUI. Detach them for the session, restore on exit.
@@ -147,8 +149,14 @@ async def run_console(motor: "Motor") -> None:  # noqa: PLR0915
         header.add_row("skills", str(cfg.default_skills))
     if cfg.default_system:
         header.add_row("system", cfg.default_system[:80] + ("…" if len(cfg.default_system) > 80 else ""))
+
+    # The console runs as a Chat — every prompt continues the dialog.
+    # `/new` resets to a fresh SDK session (same chat_id, same cwd).
+    chat = motor.chat()
+    header.add_row("chat_id", chat.chat_id)
+
     console.print(Panel(header, title="sophia-motor", border_style="cyan"))
-    console.print("[dim]/help for commands · /exit to quit · Ctrl+C interrupts a run[/dim]\n")
+    console.print("[dim]/help for commands · /new to reset chat · /exit to quit · Ctrl+C interrupts a run[/dim]\n")
 
     last_run_result = None  # populated from each DoneChunk
 
@@ -171,6 +179,9 @@ async def run_console(motor: "Motor") -> None:  # noqa: PLR0915
                 break
             elif cmd == "/help":
                 console.print(Panel(HELP_TEXT, title="help", border_style="dim"))
+            elif cmd == "/new":
+                await chat.reset()
+                console.print("[dim]chat reset — fresh SDK session, same workspace[/dim]")
             elif cmd == "/files":
                 if last_run_result is None or not last_run_result.output_files:
                     console.print("[dim]no output files in the last run[/dim]")
@@ -198,7 +209,7 @@ async def run_console(motor: "Motor") -> None:  # noqa: PLR0915
         in_text = False
         in_thinking = False
         try:
-            async for chunk in motor.stream(RunTask(prompt=prompt)):
+            async for chunk in chat.stream(prompt):
                 if isinstance(chunk, RunStartedChunk):
                     console.print(f"[dim]run {chunk.run_id}[/dim]")
                 elif isinstance(chunk, InitChunk):

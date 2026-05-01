@@ -27,6 +27,7 @@ python main.py
 | 11 | [concurrency](./concurrency)                 | One motor, N runs in parallel via `asyncio.gather` — chat-backend pattern. |
 | 12 | [vllm](./vllm)                               | Self-hosted Qwen via vLLM — same motor, `VLLMAdapter` upstream.          |
 | 13 | [console](./console)                         | Interactive REPL — `motor.console()` with rich + prompt-toolkit.         |
+| 14 | [chat](./chat)                               | Multi-turn dialog — `motor.chat()` + `chat.send()` with memory.          |
 
 Every example uses the strict guardrail (the default), so the agent is
 sandboxed inside its per-run workspace from the first call.

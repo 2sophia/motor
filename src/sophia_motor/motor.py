@@ -153,6 +153,30 @@ class Motor:
         self._started = False
         await self.events.log("INFO", "motor stopped")
 
+    # ── chat (multi-turn dialog) ─────────────────────────────────────
+
+    def chat(
+        self,
+        *,
+        chat_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        root: Optional[Path] = None,
+    ) -> "Chat":
+        """Open a multi-turn chat bound to this motor.
+
+        Each `chat.send(prompt)` reuses the same SDK session so the
+        agent remembers prior turns. The chat owns a shared workspace
+        under `<workspace_root>/../chats/<chat_id>/`; per-turn audit
+        dumps still go under `runs/<run_id>/audit/`.
+
+        Persist `chat.chat_id` + `chat.session_id` to your DB to resume
+        the dialog after a restart — pass them back here as kwargs.
+
+        See `Chat` for the full API (`send`, `stream`, `reset`, etc).
+        """
+        from ._chat import Chat
+        return Chat(self, chat_id=chat_id, session_id=session_id, root=root)
+
     # ── interactive console ──────────────────────────────────────────
 
     async def console(self) -> None:
@@ -315,6 +339,7 @@ class Motor:
             skills_manifest,
         ) = self._setup_workspace(
             run_id, attachments_items, skills_items, task.disallowed_skills,
+            chat_workspace_dir=task.workspace_dir,
         )
         self._persist_input(
             workspace_dir, run_id, task,
@@ -367,6 +392,9 @@ class Motor:
         total_cost = 0.0
         output_data: Optional[BaseModel] = None
         structured_raw: Any = None
+        # SDK session_id reported by the first SystemMessage(init); surfaced
+        # on RunResult.metadata so callers (typically Chat) can persist + resume.
+        current_session_id: Optional[str] = None
 
         # Per-turn streaming state (reset on each `message_start`):
         # - text_streamed_in_turn / thinking_streamed_in_turn: skip the
@@ -468,12 +496,12 @@ class Motor:
                         ))
                         if subtype == "init":
                             data = getattr(message, "data", None) or {}
-                            yield InitChunk(
-                                session_id=(
-                                    data.get("session_id")
-                                    if isinstance(data, dict) else None
-                                ),
+                            sid = (
+                                data.get("session_id")
+                                if isinstance(data, dict) else None
                             )
+                            current_session_id = sid
+                            yield InitChunk(session_id=sid)
 
                     elif isinstance(message, AssistantMessage):
                         for block in message.content:
@@ -659,6 +687,7 @@ class Motor:
             is_error=is_error,
             error_reason=error_reason,
             was_interrupted=was_interrupted,
+            session_id=current_session_id,
         )
 
         self._persist_trace(workspace_dir, metadata, collected, result_text)
@@ -698,34 +727,59 @@ class Motor:
         attachments_items: list,
         skills_items: list,
         disallowed_skills: list[str],
+        chat_workspace_dir: Optional[Path] = None,
     ) -> tuple[Path, Path, Path, Path, dict[str, str], dict[str, str]]:
         """Create workspace dirs and materialize attachments + skills.
 
-        Layout: CLAUDE_CONFIG_DIR is a SIBLING of the SDK cwd, never a
-        descendant. When `.claude/` lives inside the cwd, the CLI
-        mis-resolves session/projects paths and recreates the workspace
-        structure inside cwd as `./.runs/<RID>/agent_cwd/.claude/`
-        (verified empirically). Sibling layout avoids it.
+        Two modes:
 
-            <run>/                  ← motor-owned root
-              input.json, trace.json, audit/
-              .claude/              ← CLAUDE_CONFIG_DIR (sibling of agent_cwd)
-                skills/             ← link to source
-              agent_cwd/            ← SDK cwd (agent sandbox)
-                attachments/        ← link/inline
-                outputs/            ← agent Write target
+        **Standalone run** (`chat_workspace_dir=None`, the default): a
+        fresh `<workspace_root>/<run_id>/` is created, with audit, cwd,
+        and `.claude/` all under it. Each call to `motor.run()` is
+        isolated — no carry-over.
+
+        **Chat-mode** (`chat_workspace_dir` set, used by `Chat`): the
+        chat root is reused across runs. Layout:
+
+            <chat_root>/                        ← shared, persistent
+              cwd/                              ← shared SDK cwd
+                attachments/, outputs/
+              .claude/                          ← shared CLAUDE_CONFIG_DIR
+                skills/, plugins/, session.jsonl   ← session continuity
+              runs/<run_id>/
+                input.json, trace.json
+                audit/                          ← per-run audit dump
+
+        The CLAUDE_CONFIG_DIR-as-sibling-of-cwd layout is preserved in
+        both modes. The CLI's upward project-root discovery quirk is
+        avoided as long as `workspace_root` (or the chat root) lives
+        outside repos that contain `.git/` / `pyproject.toml` markers.
 
         Returns (workspace_dir, agent_cwd, audit_dir, claude_dir,
-        attachments_manifest, skills_manifest).
+        attachments_manifest, skills_manifest). `workspace_dir` is the
+        per-run dir (chat-mode: under `runs/<run_id>/`; standalone: the
+        same as the run root).
         """
-        workspace_dir = self.config.workspace_root / run_id
-        audit_dir = workspace_dir / "audit"
-        claude_dir = workspace_dir / ".claude"
-        skills_dir = claude_dir / "skills"
-        plugins_dir = claude_dir / "plugins"
-        agent_cwd = workspace_dir / "agent_cwd"
-        attachments_dir = agent_cwd / "attachments"
-        outputs_dir = agent_cwd / "outputs"
+        if chat_workspace_dir is not None:
+            chat_root = chat_workspace_dir
+            workspace_dir = chat_root / "runs" / run_id
+            audit_dir = workspace_dir / "audit"
+            claude_dir = chat_root / ".claude"
+            skills_dir = claude_dir / "skills"
+            plugins_dir = claude_dir / "plugins"
+            agent_cwd = chat_root / "cwd"
+            attachments_dir = agent_cwd / "attachments"
+            outputs_dir = agent_cwd / "outputs"
+        else:
+            workspace_dir = self.config.workspace_root / run_id
+            audit_dir = workspace_dir / "audit"
+            claude_dir = workspace_dir / ".claude"
+            skills_dir = claude_dir / "skills"
+            plugins_dir = claude_dir / "plugins"
+            agent_cwd = workspace_dir / "agent_cwd"
+            attachments_dir = agent_cwd / "attachments"
+            outputs_dir = agent_cwd / "outputs"
+
         for d in (workspace_dir, audit_dir, agent_cwd, attachments_dir,
                   outputs_dir, claude_dir, skills_dir, plugins_dir):
             d.mkdir(parents=True, exist_ok=True)
@@ -782,6 +836,11 @@ class Motor:
                 task.output_schema if task.output_schema is not None
                 else cfg.default_output_schema
             ),
+            # Chat-mode bits don't have config defaults — they're either
+            # set by Chat (which manages them) or left None for standalone
+            # runs. Either way the value passes through unchanged.
+            session_id=task.session_id,
+            workspace_dir=task.workspace_dir,
         )
 
     def _seed_claude_config_dir(self, claude_dir: Path, plugins_dir: Path) -> None:
@@ -882,7 +941,6 @@ class Motor:
             # session.jsonl, .claude.json, backups under a cwd-derived
             # fallback path and triggers telemetry + title/onboarding.
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-            "CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING": "1",
             "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
             "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
             "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
@@ -895,6 +953,13 @@ class Motor:
             "DISABLE_AUTO_COMPACT": "1",
             "DISABLE_BUG_COMMAND": "1",
         }
+        # File checkpointing controls whether the CLI persists
+        # session.jsonl on disk. We DISABLE it for standalone runs
+        # (transient, no follow-up) but LEAVE IT ENABLED for chat
+        # runs, where the next turn needs to resume from the file.
+        if task.workspace_dir is None:
+            env["CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING"] = "1"
+
         if self.config.disable_claude_md:
             # Native env-var alternative to tengu_paper_halyard in
             # .config.json — both work, env is just less ceremonial.
@@ -943,6 +1008,14 @@ class Motor:
         if task.tools is not None:
             sdk_kwargs["tools"] = task.tools
 
+        # Resume an existing SDK session (chat-style multi-turn). The CLI
+        # replays the prior conversation history before processing the new
+        # prompt. For this to work the CLI needs `session.jsonl` to exist
+        # under CLAUDE_CONFIG_DIR — Chat sets up the shared cwd + config
+        # dir + disables file-checkpointing-disable so the file persists.
+        if task.session_id is not None:
+            sdk_kwargs["resume"] = task.session_id
+
         # Pass an explicit `skills` whitelist to the SDK whenever we know
         # which skills the run materialised. The Claude CLI ships a set
         # of bundled skills (update-config, simplify, review, ...) that
@@ -968,7 +1041,11 @@ class Motor:
         extra_args: dict = {}
         if self.config.cli_bare_mode:
             extra_args["bare"] = None  # boolean flag (no value)
-        if self.config.cli_no_session_persistence:
+        # `--no-session-persistence` tells the CLI to skip session.jsonl
+        # writes. We default to ON for standalone runs (no follow-up,
+        # so no need to persist) but MUST skip it for chat-mode runs —
+        # the next turn's --resume needs the file on disk.
+        if self.config.cli_no_session_persistence and task.workspace_dir is None:
             extra_args["no-session-persistence"] = None
         # Strict structured output: forward the Pydantic-derived JSON Schema
         # to the CLI's `--json-schema` flag. The CLI validates the model's
@@ -1142,6 +1219,12 @@ def _link_file(src: Path, target: Path) -> None:
     agent may then need to be told the file path explicitly (via the
     user prompt) since glob discovery will skip it.
     """
+    if target.exists() or target.is_symlink():
+        # Idempotent re-link: chat-mode reuses the same attachments dir
+        # across turns, so the second run finds the file already there.
+        # Drop and re-link so the source can change between turns and
+        # picking the latest is correct.
+        target.unlink()
     try:
         os.link(src, target)
     except OSError as e:
@@ -1263,6 +1346,9 @@ def _materialize_skills(
                 continue
             target = skills_dir / name
             child_resolved = child.resolve(strict=True)
+            if target.exists() or target.is_symlink():
+                # Idempotent re-link for chat-mode reuse.
+                target.unlink()
             target.symlink_to(child_resolved)
             manifest[name] = f"→ {child_resolved} (link)"
     return manifest

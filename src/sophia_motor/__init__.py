@@ -10,6 +10,7 @@ from ._adapters import (
     UpstreamAdapter,
     VLLMAdapter,
 )
+from ._chat import Chat
 from ._chunks import (
     DoneChunk,
     ErrorChunk,
@@ -74,4 +75,6 @@ __all__ = [
     "UpstreamAdapter",
     "AnthropicAdapter",
     "VLLMAdapter",
+    # chat
+    "Chat",
 ]

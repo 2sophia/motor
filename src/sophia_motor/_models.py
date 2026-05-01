@@ -121,6 +121,24 @@ class RunTask:
     # `structured_output`. Pydantic-validated into `RunResult.output_data`.
     output_schema: Optional[type[BaseModel]] = None
 
+    # SDK session to resume. When set, the underlying CLI replays the prior
+    # conversation history before processing `prompt` — the agent "remembers"
+    # past turns. Most callers should not set this directly; use the `Chat`
+    # helper, which manages session_id roundtrip + shared workspace + file
+    # checkpointing automatically. Setting `session_id` here without those
+    # bits in place will silently fall back to a new session if the SDK
+    # can't find the matching session.jsonl on disk.
+    session_id: Optional[str] = None
+
+    # Pre-existing chat workspace to reuse instead of minting a fresh one
+    # under `MotorConfig.workspace_root`. When set, the run's cwd, .claude
+    # dir, and CLAUDE_CONFIG_DIR all point INSIDE this directory, so SDK
+    # session.jsonl persistence works across consecutive runs (the CLI's
+    # file-checkpointing is left ENABLED for these runs). Audit dumps for
+    # each turn live under `<workspace_dir>/runs/<run_id>/audit/`. Most
+    # callers should not pass this directly — use `Chat` which sets it.
+    workspace_dir: Optional[Path] = None
+
 
 @dataclass
 class RunMetadata:
@@ -139,6 +157,11 @@ class RunMetadata:
     # an upstream failure. Inspect this field to render "interrupted" UI
     # state distinct from both success and error.
     was_interrupted: bool = False
+    # SDK session_id reported by the CLI's init message. Persist this to
+    # resume the dialog later (e.g. for chat-style multi-turn). For runs
+    # outside a `Chat`, this field is informational only — the run started
+    # a fresh session unless `RunTask.session_id` was passed in.
+    session_id: Optional[str] = None
 
 
 @dataclass
