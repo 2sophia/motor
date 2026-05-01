@@ -42,6 +42,7 @@ def test_output_schema_passed_to_cli_via_extra_args(tmp_path: Path) -> None:
         agent_cwd=tmp_path / "agent",
         claude_dir=tmp_path / ".claude",
         api_key="dummy",
+        run_id="run-test",
     )
     assert opts.extra_args is not None
     assert "json-schema" in opts.extra_args
@@ -61,6 +62,7 @@ def test_output_schema_omitted_when_not_set(tmp_path: Path) -> None:
         agent_cwd=tmp_path / "agent",
         claude_dir=tmp_path / ".claude",
         api_key="dummy",
+        run_id="run-test",
     )
     if opts.extra_args:
         assert "json-schema" not in opts.extra_args
@@ -78,6 +80,7 @@ def test_explicit_tool_drops_from_default_disallowed(tmp_path: Path) -> None:
         agent_cwd=tmp_path / "agent",
         claude_dir=tmp_path / ".claude",
         api_key="dummy",
+        run_id="run-test",
     )
     assert "WebSearch" not in opts.disallowed_tools
     assert "WebFetch" not in opts.disallowed_tools

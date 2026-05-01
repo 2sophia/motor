@@ -1,6 +1,6 @@
 # concurrency
 
-Fan out N independent runs across N motor instances, all in parallel.
+Run N tasks in parallel on **one Motor instance**.
 
 ## Minimal example
 
@@ -14,6 +14,8 @@ class ToneVerdict(BaseModel):
     tone: Literal["positive", "neutral", "negative"]
     rationale: str
 
+motor = Motor(MotorConfig(console_log_enabled=False))   # ← one motor
+
 reviews = [
     "Best product I've ever bought, recommend to everyone.",
     "It works but the packaging was terrible.",
@@ -21,7 +23,6 @@ reviews = [
 ]
 
 async def classify(review: str) -> ToneVerdict:
-    motor = Motor(MotorConfig(console_log_enabled=False))
     result = await motor.run(RunTask(
         prompt=f"Classify the tone of: {review}",
         output_schema=ToneVerdict,
@@ -31,34 +32,40 @@ async def classify(review: str) -> ToneVerdict:
 verdicts = await asyncio.gather(*(classify(r) for r in reviews))
 ```
 
-## Why N motors instead of one?
-
-A single Motor handles one run at a time — its proxy is bound to the
-active run for audit-dump tagging. Trying to drive parallel runs
-through a shared instance would scramble the audit trail. The clean
-pattern is one motor per concurrent task, each with its own
-kernel-assigned proxy port. No shared state, no port collisions.
-
-## What this example shows
-
-- 5 product reviews classified in parallel via `asyncio.gather`.
-- One Motor per task, each with `console_log_enabled=False` so the
-  combined stdout stays readable.
-- `output_schema` set so each result comes back as a typed
-  `ToneVerdict` instance.
-- An explicit `motor.stop()` for each instance at the end (optional —
-  process exit would tear down the proxies anyway).
-
 ## Run
 
 ```bash
 pip install sophia-motor
 export ANTHROPIC_API_KEY=sk-ant-...
+cd examples/concurrency
 python main.py
 ```
+
+## How it works
+
+Internally the proxy keeps a `dict[run_id → audit_dir]` registry. Each
+run gets its own URL under `/run/<run_id>/v1/messages` — concurrent
+runs never collide on the dump path or the request counter. There is
+no per-motor lock; `await motor.run(task)` is fully reentrant.
+
+This is exactly the pattern a chat backend uses to serve multiple
+users from the same process: instantiate one Motor, hand it whatever
+RunTask each request brings, fan out with `asyncio.gather` (or just
+let the web framework drive concurrency via its own scheduler).
+
+## When to use multiple Motor instances anyway
+
+The single-Motor pattern is the right default. You only want N motors
+when each task needs **a radically different MotorConfig** that can't
+be expressed via per-task `RunTask` overrides — e.g. different
+`upstream_base_url`, different `workspace_root`, different `guardrail`
+mode. In that case each motor still services as many concurrent runs
+as you want; the multiplicity is on the *config* axis, not on the
+*concurrency* axis.
 
 ## What you should see
 
 Five reviews classified with their tone and a one-line rationale, plus
-a wall-clock duration. The wall-clock should be roughly the time of a
-single run, not 5×, because all runs execute concurrently.
+a wall-clock duration. Because all five run concurrently against the
+same shared motor (and hence the same shared proxy), the wall-clock
+should be roughly the time of a single run, not 5×.

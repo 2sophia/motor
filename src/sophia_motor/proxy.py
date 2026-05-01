@@ -23,12 +23,13 @@ import asyncio
 import json
 import re
 import socket
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .events import Event
@@ -41,15 +42,30 @@ if TYPE_CHECKING:
 _SDK_IDENTITY_LINE = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
 
 
+@dataclass
+class _RunState:
+    """Per-run state held by the proxy: where to dump, request counter."""
+    audit_dir: Path
+    req_counter: int = 0
+
+
 class ProxyServer:
-    """Local FastAPI app that forwards /v1/messages to the upstream Anthropic API."""
+    """Local FastAPI app that dispatches /run/{run_id}/v1/messages to upstream.
+
+    Multi-run aware: each run registered via `register_run(run_id, audit_dir)`
+    gets its own state slot. The agent's CLI subprocess receives a per-run
+    base URL (`<proxy>/run/<run_id>`), so concurrent runs on the same Motor
+    instance share the proxy without colliding on audit dump or request
+    numbering.
+    """
 
     def __init__(self, config: "MotorConfig", events: "EventBus") -> None:
         self.config = config
         self.events = events
-        self._current_run_id: Optional[str] = None
-        self._current_audit_dir: Optional[Path] = None
-        self._req_counter: int = 0
+        # Active runs registered on this proxy. Keys are run_id strings,
+        # values are per-run state. Multiple concurrent runs on the same
+        # Motor coexist here without serialization.
+        self._runs: dict[str, _RunState] = {}
 
         self.server: Optional[uvicorn.Server] = None
         self._task: Optional[asyncio.Task] = None
@@ -104,19 +120,22 @@ class ProxyServer:
 
     # ── per-run binding ──────────────────────────────────────────────
 
-    def set_active_run(self, run_id: str, audit_dir: Path) -> None:
-        """Bind a run_id so dumps and events get tagged correctly.
+    def register_run(self, run_id: str, audit_dir: Path) -> None:
+        """Open a slot for `run_id`. The CLI subprocess for this run will
+        post to `/run/{run_id}/v1/messages` and the proxy will route the
+        request + dump to `audit_dir`.
 
-        A single Motor instance handles one run at a time. For parallelism,
-        instantiate multiple Motors (each has its own proxy on its own port).
+        Multiple runs can coexist — the registry is multi-tenant.
         """
-        self._current_run_id = run_id
-        self._current_audit_dir = audit_dir
-        self._req_counter = 0
+        self._runs[run_id] = _RunState(audit_dir=audit_dir)
 
-    def clear_active_run(self) -> None:
-        self._current_run_id = None
-        self._current_audit_dir = None
+    def unregister_run(self, run_id: str) -> None:
+        """Free the slot for `run_id`. Idempotent."""
+        self._runs.pop(run_id, None)
+
+    def base_url_for_run(self, run_id: str) -> str:
+        """Per-run base URL the SDK subprocess uses as `ANTHROPIC_BASE_URL`."""
+        return f"{self.base_url}/run/{run_id}"
 
     # ── app ──────────────────────────────────────────────────────────
 
@@ -125,10 +144,22 @@ class ProxyServer:
 
         @app.get("/health")
         async def health():
-            return {"status": "ok", "run_id": self._current_run_id}
+            return {"status": "ok", "active_runs": list(self._runs.keys())}
 
-        @app.post("/v1/messages")
-        async def messages(req: Request):
+        @app.post("/run/{run_id}/v1/messages")
+        async def messages(run_id: str, req: Request):
+            state = self._runs.get(run_id)
+            if state is None:
+                # The CLI was pointed at a base URL whose run_id we don't
+                # know about — usually means the run was unregistered
+                # before the request arrived (race) or the base URL was
+                # tampered with. Return a structured error rather than
+                # silently dumping into the wrong dir.
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"run_id {run_id!r} not registered with this proxy",
+                )
+
             body_bytes = await req.body()
             try:
                 body = json.loads(body_bytes)
@@ -147,19 +178,19 @@ class ProxyServer:
                 body, self.config.tool_description_overrides,
             )
 
-            self._req_counter += 1
-            req_idx = self._req_counter
+            state.req_counter += 1
+            req_idx = state.req_counter
 
             # ── persist request ──
-            if self.config.proxy_dump_payloads and self._current_audit_dir is not None:
+            if self.config.proxy_dump_payloads:
                 _dump_json(
-                    self._current_audit_dir / f"request_{req_idx:03d}.json",
+                    state.audit_dir / f"request_{req_idx:03d}.json",
                     body,
                 )
 
             await self.events.emit_event(Event(
                 type="proxy_request",
-                run_id=self._current_run_id,
+                run_id=run_id,
                 payload={
                     "idx": req_idx,
                     "model": body.get("model"),
@@ -174,7 +205,7 @@ class ProxyServer:
             await self.events.log(
                 "INFO",
                 f"→ anthropic request #{req_idx}",
-                run_id=self._current_run_id,
+                run_id=run_id,
                 model=body.get("model"),
                 n_messages=len(body.get("messages", [])),
                 n_tools=len(body.get("tools", [])),
@@ -189,7 +220,7 @@ class ProxyServer:
 
             if is_stream:
                 return StreamingResponse(
-                    self._stream_upstream(target, body, headers, req_idx),
+                    self._stream_upstream(target, body, headers, req_idx, run_id, state),
                     media_type="text/event-stream",
                 )
 
@@ -202,16 +233,16 @@ class ProxyServer:
             except Exception:
                 response_body = {"_raw": response_bytes.decode(errors="replace")}
 
-            if self.config.proxy_dump_payloads and self._current_audit_dir is not None:
+            if self.config.proxy_dump_payloads:
                 _dump_json(
-                    self._current_audit_dir / f"response_{req_idx:03d}.json",
+                    state.audit_dir / f"response_{req_idx:03d}.json",
                     response_body,
                 )
 
             usage = response_body.get("usage") or {}
             await self.events.emit_event(Event(
                 type="proxy_response",
-                run_id=self._current_run_id,
+                run_id=run_id,
                 payload={
                     "idx": req_idx,
                     "status": upstream.status_code,
@@ -223,7 +254,7 @@ class ProxyServer:
                 "INFO",
                 f"← anthropic response #{req_idx} status={upstream.status_code} "
                 f"stop={response_body.get('stop_reason')}",
-                run_id=self._current_run_id,
+                run_id=run_id,
                 input_tokens=usage.get("input_tokens"),
                 output_tokens=usage.get("output_tokens"),
             )
@@ -233,7 +264,7 @@ class ProxyServer:
 
     # ── streaming forward ────────────────────────────────────────────
 
-    async def _stream_upstream(self, target, body, headers, req_idx):
+    async def _stream_upstream(self, target, body, headers, req_idx, run_id, state):
         """Pipe upstream SSE chunks straight to the client; collect for dump."""
         timeout = httpx.Timeout(600.0, connect=15.0)
         chunks: list[bytes] = []
@@ -263,14 +294,14 @@ class ProxyServer:
                     usage_seen.update(data["usage"])
             elif data.get("type") == "message_start":
                 usage_seen.update((data.get("message", {}) or {}).get("usage", {}) or {})
-        if self.config.proxy_dump_payloads and self._current_audit_dir is not None:
+        if self.config.proxy_dump_payloads:
             _dump_text(
-                self._current_audit_dir / f"response_{req_idx:03d}.sse",
+                state.audit_dir / f"response_{req_idx:03d}.sse",
                 full_text,
             )
         await self.events.emit_event(Event(
             type="proxy_response",
-            run_id=self._current_run_id,
+            run_id=run_id,
             payload={
                 "idx": req_idx,
                 "stream": True,
@@ -281,7 +312,7 @@ class ProxyServer:
         await self.events.log(
             "INFO",
             f"← anthropic stream response #{req_idx} stop={stop_reason}",
-            run_id=self._current_run_id,
+            run_id=run_id,
             input_tokens=usage_seen.get("input_tokens"),
             output_tokens=usage_seen.get("output_tokens"),
         )

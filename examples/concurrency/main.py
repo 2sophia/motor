@@ -1,15 +1,16 @@
 # Copyright (c) 2026 Sophia AI
 # SPDX-License-Identifier: MIT
-"""Concurrency — N motors running in parallel.
+"""Concurrency — one Motor, N runs in parallel.
 
-A single Motor instance handles one run at a time (its proxy is bound
-to the active run for audit-dump tagging). For real parallelism you
-instantiate N Motor objects and dispatch them with `asyncio.gather`.
-Each motor gets its own kernel-assigned proxy port — no port
-collisions, no shared state.
+The same Motor instance can drive any number of concurrent runs: the
+proxy multiplexes them via per-run path prefixes (`/run/<id>/v1/messages`)
+so each run owns its own audit dump and request counter without
+serialization.
 
-This is the canonical fan-out pattern: classify N items in parallel,
-join the results, return.
+This is the canonical fan-out pattern for serving multiple users from
+the same process — exactly how a chat backend (sophia-agent style)
+spawns one agent run per HTTP request without instantiating one Motor
+per user.
 
 Run:
     pip install sophia-motor
@@ -40,7 +41,8 @@ REVIEWS = [
 ]
 
 
-async def classify_one(motor: Motor, review: str) -> tuple[str, ToneVerdict]:
+async def classify(motor: Motor, review: str) -> tuple[str, ToneVerdict]:
+    """Single classification — same `motor` instance shared across calls."""
     result = await motor.run(RunTask(
         system="You are a concise tone-classification agent.",
         prompt=f"Classify the tone of this review:\n\n{review}",
@@ -53,18 +55,18 @@ async def classify_one(motor: Motor, review: str) -> tuple[str, ToneVerdict]:
 
 
 async def main() -> None:
-    # One motor per concurrent task; each owns its proxy port.
-    motors = [Motor(MotorConfig(console_log_enabled=False)) for _ in REVIEWS]
+    # ONE motor — shared by all concurrent tasks. The proxy and the
+    # CLAUDE_CONFIG_DIR machinery are reused; only per-run state
+    # (audit dir, run_id, ClaudeSDKClient) is unique per task.
+    motor = Motor(MotorConfig(console_log_enabled=False))
 
     t0 = time.monotonic()
     results = await asyncio.gather(*[
-        classify_one(motor, review) for motor, review in zip(motors, REVIEWS)
+        classify(motor, review) for review in REVIEWS
     ])
     wall = time.monotonic() - t0
 
-    # Cleanup — proxies stop, ports released. Optional: process exit
-    # would do this for us, but it's tidy.
-    await asyncio.gather(*[motor.stop() for motor in motors])
+    await motor.stop()
 
     print("─" * 70)
     for review, verdict in results:
@@ -72,7 +74,7 @@ async def main() -> None:
         print(f"           ↳ {verdict.one_line_reason}")
     print("─" * 70)
     print(f"classified {len(results)} reviews in {wall:.1f}s wall-clock "
-          f"using {len(motors)} parallel motors")
+          f"using ONE Motor instance — all {len(REVIEWS)} runs in parallel")
 
 
 if __name__ == "__main__":

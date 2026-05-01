@@ -29,6 +29,7 @@ import os
 import shutil
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
@@ -79,6 +80,13 @@ from .events import (
 from .proxy import ProxyServer
 
 
+@dataclass
+class _ActiveRun:
+    """Per-run state on the Motor side: the SDK client + interrupt flag."""
+    client: ClaudeSDKClient
+    interrupt_requested: bool = False
+
+
 class Motor:
     """Instanceable agent motor.
 
@@ -106,13 +114,12 @@ class Motor:
 
         self._proxy: Optional[ProxyServer] = None
         self._started = False
-        self._run_lock = asyncio.Lock()
-        # Set while a run is in flight — used by `motor.interrupt()` to
-        # signal the SDK CLI subprocess of the active turn. None when no
-        # run is active (idempotent: interrupt() is a no-op then).
-        self._current_client: Optional[ClaudeSDKClient] = None
-        self._current_run_id: Optional[str] = None
-        self._interrupt_requested = False
+        # Multi-run registry. Concurrent runs on the same Motor coexist —
+        # each gets its own slot keyed by run_id, with its own SDK client
+        # and interrupt flag. `motor.interrupt(run_id=...)` finds the right
+        # client here; `motor.interrupt()` no-arg is unambiguous only when
+        # exactly one run is active.
+        self._active_runs: dict[str, _ActiveRun] = {}
 
         if self.config.console_log_enabled:
             self.events.on_log(default_console_logger)
@@ -146,47 +153,56 @@ class Motor:
     # ── interrupt ────────────────────────────────────────────────────
 
     async def interrupt(self, run_id: Optional[str] = None) -> bool:
-        """Interrupt the run currently in flight on this motor.
+        """Interrupt a run currently in flight on this motor.
 
         This is the "Ctrl+C" of an active run — a deliberate user action,
         not an error. Distinct from `stop()` (which shuts the motor down).
 
-        Mechanics: signals the SDK CLI subprocess via `client.interrupt()`,
-        which exits the current turn. The `async with ClaudeSDKClient`
-        cleanup then closes the subprocess and the TCP to our proxy,
-        letting upstream abort. The active `motor.stream(task)` finishes
-        normally with a `DoneChunk` whose `result.metadata.was_interrupted`
-        is True (`is_error` stays False).
+        Mechanics: signals the SDK CLI subprocess for that run via
+        `client.interrupt()`, which exits the current turn. The
+        `async with ClaudeSDKClient` cleanup then closes the subprocess
+        and the TCP to our proxy, letting upstream abort. The matching
+        `motor.stream(task)` finishes normally with a `DoneChunk` whose
+        `result.metadata.was_interrupted` is True (`is_error` stays False).
 
         Args:
-            run_id: when provided, only interrupt if it matches the current
-                run. Race-condition guard for "user clicks stop, but their
-                old run already finished and a new one started" — passing
-                the run_id they saw on screen avoids interrupting the wrong
-                one. `None` (default) means "interrupt whatever is current".
+            run_id: which run to interrupt. Required disambiguation when
+                more than one run is active on this motor. `None` is
+                allowed only when exactly one run is active (then it
+                targets that one).
 
         Returns:
-            True if a run was actively interrupted, False if no run is
-            currently active or `run_id` did not match. Always idempotent;
-            never raises.
+            True if a run was actively interrupted, False if no matching
+            run is active. Idempotent; never raises in the no-active-run
+            case.
+
+        Raises:
+            RuntimeError: when `run_id` is None and more than one run is
+                active on the motor (caller must specify which).
         """
-        client = self._current_client
-        if client is None:
+        if not self._active_runs:
             return False
-        if run_id is not None and run_id != self._current_run_id:
+        if run_id is None:
+            if len(self._active_runs) > 1:
+                raise RuntimeError(
+                    f"motor has {len(self._active_runs)} active runs "
+                    f"({list(self._active_runs)}); pass run_id=... to "
+                    f"disambiguate which one to interrupt"
+                )
+            run_id = next(iter(self._active_runs))
+        active = self._active_runs.get(run_id)
+        if active is None:
             return False
-        self._interrupt_requested = True
+        active.interrupt_requested = True
         try:
-            await client.interrupt()
+            await active.client.interrupt()
         except Exception as e:  # noqa: BLE001
             await self.events.log(
                 "WARNING",
                 f"interrupt() raised: {e!r} (treating as best-effort)",
-                run_id=self._current_run_id,
+                run_id=run_id,
             )
-        await self.events.log(
-            "INFO", "interrupt requested", run_id=self._current_run_id,
-        )
+        await self.events.log("INFO", "interrupt requested", run_id=run_id)
         return True
 
     # ── workspace cleanup ────────────────────────────────────────────
@@ -261,385 +277,386 @@ class Motor:
         _validate_attachments(attachments_items)
         _validate_skills(skills_items, task.disallowed_skills)
 
-        async with self._run_lock:
-            run_id = self._mint_run_id()
-            (
-                workspace_dir,
-                agent_cwd,
-                audit_dir,
-                claude_dir,
-                attachments_manifest,
-                skills_manifest,
-            ) = self._setup_workspace(
-                run_id, attachments_items, skills_items, task.disallowed_skills,
-            )
-            self._persist_input(
-                workspace_dir, run_id, task,
-                attachments_manifest, skills_manifest,
-            )
+        run_id = self._mint_run_id()
+        (
+            workspace_dir,
+            agent_cwd,
+            audit_dir,
+            claude_dir,
+            attachments_manifest,
+            skills_manifest,
+        ) = self._setup_workspace(
+            run_id, attachments_items, skills_items, task.disallowed_skills,
+        )
+        self._persist_input(
+            workspace_dir, run_id, task,
+            attachments_manifest, skills_manifest,
+        )
 
-            if self._proxy is not None:
-                self._proxy.set_active_run(run_id, audit_dir)
+        if self._proxy is not None:
+            self._proxy.register_run(run_id, audit_dir)
 
-            outputs_dir = agent_cwd / "outputs"
+        outputs_dir = agent_cwd / "outputs"
 
-            opts = self._build_sdk_options(
-                task, agent_cwd, claude_dir, api_key,
-                skills_allowed=list(skills_manifest.keys()),
-            )
+        opts = self._build_sdk_options(
+            task, agent_cwd, claude_dir, api_key, run_id,
+            skills_allowed=list(skills_manifest.keys()),
+        )
 
-            await self.events.emit_event(Event(
-                type="run_started",
-                run_id=run_id,
-                payload={
-                    "prompt": task.prompt[:200],
-                    "model": self.config.model,
-                    "workspace": str(workspace_dir),
-                    "max_turns": opts.max_turns,
-                    "allowed_tools": task.allowed_tools,
-                },
-            ))
-            await self.events.log(
-                "INFO",
-                f"run started → {run_id}",
-                run_id=run_id,
-                model=self.config.model,
-            )
-            yield RunStartedChunk(
-                run_id=run_id,
-                model=self.config.model,
-                prompt_preview=task.prompt[:200],
-                max_turns=opts.max_turns or self.config.default_max_turns,
-            )
+        await self.events.emit_event(Event(
+            type="run_started",
+            run_id=run_id,
+            payload={
+                "prompt": task.prompt[:200],
+                "model": self.config.model,
+                "workspace": str(workspace_dir),
+                "max_turns": opts.max_turns,
+                "allowed_tools": task.allowed_tools,
+            },
+        ))
+        await self.events.log(
+            "INFO",
+            f"run started → {run_id}",
+            run_id=run_id,
+            model=self.config.model,
+        )
+        yield RunStartedChunk(
+            run_id=run_id,
+            model=self.config.model,
+            prompt_preview=task.prompt[:200],
+            max_turns=opts.max_turns or self.config.default_max_turns,
+        )
 
-            t0 = time.monotonic()
-            collected: list[dict] = []
-            result_text: Optional[str] = None
-            is_error = False
-            error_reason: Optional[str] = None
-            n_turns = 0
-            n_tool_calls = 0
-            input_tokens = 0
-            output_tokens = 0
-            total_cost = 0.0
-            output_data: Optional[BaseModel] = None
-            structured_raw: Any = None
+        t0 = time.monotonic()
+        collected: list[dict] = []
+        result_text: Optional[str] = None
+        is_error = False
+        error_reason: Optional[str] = None
+        n_turns = 0
+        n_tool_calls = 0
+        input_tokens = 0
+        output_tokens = 0
+        total_cost = 0.0
+        output_data: Optional[BaseModel] = None
+        structured_raw: Any = None
 
-            # Per-turn streaming state (reset on each `message_start`):
-            # - text_streamed_in_turn / thinking_streamed_in_turn: skip the
-            #   AssistantMessage Text/ThinkingBlock fallback chunk if we've
-            #   already streamed the content as deltas
-            # - active_tool_blocks[idx]: tool_use blocks mid-stream; we
-            #   accumulate `input_json_delta` partials per index
-            # - streamed_tool_use_ids: ids that streamed via deltas, so the
-            #   AssistantMessage ToolUseBlock dedups to a `tool_use_finalized`
-            text_streamed_in_turn = False
-            thinking_streamed_in_turn = False
-            active_tool_blocks: dict[int, dict] = {}
-            streamed_tool_use_ids: set[str] = set()
+        # Per-turn streaming state (reset on each `message_start`):
+        # - text_streamed_in_turn / thinking_streamed_in_turn: skip the
+        #   AssistantMessage Text/ThinkingBlock fallback chunk if we've
+        #   already streamed the content as deltas
+        # - active_tool_blocks[idx]: tool_use blocks mid-stream; we
+        #   accumulate `input_json_delta` partials per index
+        # - streamed_tool_use_ids: ids that streamed via deltas, so the
+        #   AssistantMessage ToolUseBlock dedups to a `tool_use_finalized`
+        text_streamed_in_turn = False
+        thinking_streamed_in_turn = False
+        active_tool_blocks: dict[int, dict] = {}
+        streamed_tool_use_ids: set[str] = set()
 
-            self._interrupt_requested = False
-            self._current_run_id = run_id
-            try:
-                async with ClaudeSDKClient(options=opts) as client:
-                    self._current_client = client
-                    await client.query(prompt=task.prompt)
-                    async for message in client.receive_response():
-                        kind = type(message).__name__
+        try:
+            async with ClaudeSDKClient(options=opts) as client:
+                self._active_runs[run_id] = _ActiveRun(client=client)
+                await client.query(prompt=task.prompt)
+                async for message in client.receive_response():
+                    kind = type(message).__name__
 
-                        if isinstance(message, StreamEvent):
-                            # Raw API delta path. Drives the live UI:
-                            # text/thinking chunks, tool_use open/delta/close.
-                            event = message.event or {}
-                            etype = event.get("type")
+                    if isinstance(message, StreamEvent):
+                        # Raw API delta path. Drives the live UI:
+                        # text/thinking chunks, tool_use open/delta/close.
+                        event = message.event or {}
+                        etype = event.get("type")
 
-                            if etype == "message_start":
-                                text_streamed_in_turn = False
-                                thinking_streamed_in_turn = False
-                                active_tool_blocks.clear()
-                                streamed_tool_use_ids.clear()
+                        if etype == "message_start":
+                            text_streamed_in_turn = False
+                            thinking_streamed_in_turn = False
+                            active_tool_blocks.clear()
+                            streamed_tool_use_ids.clear()
 
-                            elif etype == "content_block_start":
-                                idx = event.get("index")
-                                block = event.get("content_block") or {}
-                                if block.get("type") == "tool_use":
-                                    tool_use_id = block.get("id", "")
-                                    tool_name = block.get("name", "")
-                                    active_tool_blocks[idx] = {
-                                        "id": tool_use_id,
-                                        "name": tool_name,
-                                        "partial_json": "",
-                                    }
-                                    streamed_tool_use_ids.add(tool_use_id)
-                                    yield ToolUseStartChunk(
-                                        tool_use_id=tool_use_id,
-                                        tool=tool_name,
-                                        index=idx,
-                                    )
-
-                            elif etype == "content_block_delta":
-                                idx = event.get("index")
-                                delta = event.get("delta") or {}
-                                dtype = delta.get("type")
-                                if dtype == "text_delta":
-                                    chunk = delta.get("text") or ""
-                                    if chunk:
-                                        text_streamed_in_turn = True
-                                        yield TextDeltaChunk(text=chunk)
-                                elif dtype == "input_json_delta":
-                                    partial = delta.get("partial_json") or ""
-                                    tool_state = active_tool_blocks.get(idx)
-                                    if tool_state and partial:
-                                        tool_state["partial_json"] += partial
-                                        extracted = parse_partial_tool_input(
-                                            tool_state["partial_json"],
-                                            tool_state["name"],
-                                        )
-                                        yield ToolUseDeltaChunk(
-                                            tool_use_id=tool_state["id"],
-                                            tool=tool_state["name"],
-                                            partial_json=partial,
-                                            extracted=extracted,
-                                            index=idx,
-                                        )
-                                elif dtype == "thinking_delta":
-                                    chunk = delta.get("thinking") or ""
-                                    if chunk:
-                                        thinking_streamed_in_turn = True
-                                        yield ThinkingDeltaChunk(text=chunk)
-
-                            elif etype == "content_block_stop":
-                                idx = event.get("index")
-                                tool_state = active_tool_blocks.pop(idx, None)
-                                if tool_state:
-                                    yield ToolUseCompleteChunk(
-                                        tool_use_id=tool_state["id"],
-                                        tool=tool_state["name"],
-                                    )
-                            continue
-
-                        if isinstance(message, SystemMessage):
-                            subtype = getattr(message, "subtype", None)
-                            await self.events.emit_event(Event(
-                                type="system_message",
-                                run_id=run_id,
-                                payload={"subtype": subtype},
-                            ))
-                            if subtype == "init":
-                                data = getattr(message, "data", None) or {}
-                                yield InitChunk(
-                                    session_id=(
-                                        data.get("session_id")
-                                        if isinstance(data, dict) else None
-                                    ),
+                        elif etype == "content_block_start":
+                            idx = event.get("index")
+                            block = event.get("content_block") or {}
+                            if block.get("type") == "tool_use":
+                                tool_use_id = block.get("id", "")
+                                tool_name = block.get("name", "")
+                                active_tool_blocks[idx] = {
+                                    "id": tool_use_id,
+                                    "name": tool_name,
+                                    "partial_json": "",
+                                }
+                                streamed_tool_use_ids.add(tool_use_id)
+                                yield ToolUseStartChunk(
+                                    tool_use_id=tool_use_id,
+                                    tool=tool_name,
+                                    index=idx,
                                 )
 
-                        elif isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock):
-                                    collected.append({"type": "text", "text": block.text})
-                                    await self.events.emit_event(Event(
-                                        type="assistant_text",
-                                        run_id=run_id,
-                                        payload={
-                                            "len": len(block.text),
-                                            "preview": block.text[:200],
-                                        },
-                                    ))
-                                    # Fallback: only yield the full block if we
-                                    # didn't already stream its content as deltas.
-                                    if not text_streamed_in_turn:
-                                        yield TextBlockChunk(text=block.text)
-                                elif isinstance(block, ThinkingBlock):
-                                    collected.append({"type": "thinking", "text": block.thinking})
-                                    await self.events.emit_event(Event(
-                                        type="thinking",
-                                        run_id=run_id,
-                                        payload={"len": len(block.thinking)},
-                                    ))
-                                    if not thinking_streamed_in_turn:
-                                        yield ThinkingBlockChunk(text=block.thinking)
-                                elif isinstance(block, ToolUseBlock):
-                                    n_tool_calls += 1
-                                    collected.append({
-                                        "type": "tool_use",
-                                        "tool": block.name,
-                                        "input": block.input,
-                                    })
-                                    await self.events.emit_event(Event(
-                                        type="tool_use",
-                                        run_id=run_id,
-                                        payload={
-                                            "tool": block.name,
-                                            "input_keys": list(block.input.keys())
-                                            if isinstance(block.input, dict) else None,
-                                        },
-                                    ))
-                                    block_id = getattr(block, "id", None) or ""
-                                    block_input = (
-                                        block.input
-                                        if isinstance(block.input, dict)
-                                        else {"_raw": block.input}
+                        elif etype == "content_block_delta":
+                            idx = event.get("index")
+                            delta = event.get("delta") or {}
+                            dtype = delta.get("type")
+                            if dtype == "text_delta":
+                                chunk = delta.get("text") or ""
+                                if chunk:
+                                    text_streamed_in_turn = True
+                                    yield TextDeltaChunk(text=chunk)
+                            elif dtype == "input_json_delta":
+                                partial = delta.get("partial_json") or ""
+                                tool_state = active_tool_blocks.get(idx)
+                                if tool_state and partial:
+                                    tool_state["partial_json"] += partial
+                                    extracted = parse_partial_tool_input(
+                                        tool_state["partial_json"],
+                                        tool_state["name"],
                                     )
-                                    yield ToolUseFinalizedChunk(
-                                        tool_use_id=block_id,
-                                        tool=block.name,
-                                        input=block_input,
+                                    yield ToolUseDeltaChunk(
+                                        tool_use_id=tool_state["id"],
+                                        tool=tool_state["name"],
+                                        partial_json=partial,
+                                        extracted=extracted,
+                                        index=idx,
                                     )
-                                    # Live signal for file-creation tools.
-                                    # Only Write/Edit carry a file_path the
-                                    # model committed to; Bash file creation
-                                    # is captured at run-end via the
-                                    # outputs/ directory walk instead.
-                                    if block.name in ("Write", "Edit"):
-                                        file_chunk = _output_file_ready_chunk(
-                                            block.name, block_input, agent_cwd, outputs_dir,
-                                        )
-                                        if file_chunk is not None:
-                                            yield file_chunk
+                            elif dtype == "thinking_delta":
+                                chunk = delta.get("thinking") or ""
+                                if chunk:
+                                    thinking_streamed_in_turn = True
+                                    yield ThinkingDeltaChunk(text=chunk)
 
-                        elif isinstance(message, UserMessage):
-                            for block in message.content:
-                                if isinstance(block, ToolResultBlock):
-                                    preview = _tool_result_preview(block)
-                                    block_is_error = bool(getattr(block, "is_error", False))
-                                    await self.events.emit_event(Event(
-                                        type="tool_result",
-                                        run_id=run_id,
-                                        payload={
-                                            "is_error": block_is_error,
-                                            "preview": preview,
-                                        },
-                                    ))
-                                    yield ToolResultChunk(
-                                        tool_use_id=getattr(block, "tool_use_id", "") or "",
-                                        is_error=block_is_error,
-                                        preview=preview,
-                                    )
+                        elif etype == "content_block_stop":
+                            idx = event.get("index")
+                            tool_state = active_tool_blocks.pop(idx, None)
+                            if tool_state:
+                                yield ToolUseCompleteChunk(
+                                    tool_use_id=tool_state["id"],
+                                    tool=tool_state["name"],
+                                )
+                        continue
 
-                        elif isinstance(message, ResultMessage):
-                            result_text = message.result
-                            # If the user called motor.interrupt(), the SDK
-                            # closes the turn with is_error=True. That's
-                            # not a failure from the caller's perspective —
-                            # the dedicated `was_interrupted` flag carries
-                            # that signal, leaving is_error free for genuine
-                            # upstream/schema/etc errors.
-                            is_error = (
-                                bool(message.is_error)
-                                and not self._interrupt_requested
+                    if isinstance(message, SystemMessage):
+                        subtype = getattr(message, "subtype", None)
+                        await self.events.emit_event(Event(
+                            type="system_message",
+                            run_id=run_id,
+                            payload={"subtype": subtype},
+                        ))
+                        if subtype == "init":
+                            data = getattr(message, "data", None) or {}
+                            yield InitChunk(
+                                session_id=(
+                                    data.get("session_id")
+                                    if isinstance(data, dict) else None
+                                ),
                             )
-                            n_turns = message.num_turns or 0
-                            total_cost = message.total_cost_usd or 0.0
-                            usage = getattr(message, "usage", None) or {}
-                            if isinstance(usage, dict):
-                                input_tokens = int(usage.get("input_tokens") or 0)
-                                output_tokens = int(usage.get("output_tokens") or 0)
-                            structured_raw = getattr(message, "structured_output", None)
-                            if task.output_schema is not None:
-                                if structured_raw is None:
+
+                    elif isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                collected.append({"type": "text", "text": block.text})
+                                await self.events.emit_event(Event(
+                                    type="assistant_text",
+                                    run_id=run_id,
+                                    payload={
+                                        "len": len(block.text),
+                                        "preview": block.text[:200],
+                                    },
+                                ))
+                                # Fallback: only yield the full block if we
+                                # didn't already stream its content as deltas.
+                                if not text_streamed_in_turn:
+                                    yield TextBlockChunk(text=block.text)
+                            elif isinstance(block, ThinkingBlock):
+                                collected.append({"type": "thinking", "text": block.thinking})
+                                await self.events.emit_event(Event(
+                                    type="thinking",
+                                    run_id=run_id,
+                                    payload={"len": len(block.thinking)},
+                                ))
+                                if not thinking_streamed_in_turn:
+                                    yield ThinkingBlockChunk(text=block.thinking)
+                            elif isinstance(block, ToolUseBlock):
+                                n_tool_calls += 1
+                                collected.append({
+                                    "type": "tool_use",
+                                    "tool": block.name,
+                                    "input": block.input,
+                                })
+                                await self.events.emit_event(Event(
+                                    type="tool_use",
+                                    run_id=run_id,
+                                    payload={
+                                        "tool": block.name,
+                                        "input_keys": list(block.input.keys())
+                                        if isinstance(block.input, dict) else None,
+                                    },
+                                ))
+                                block_id = getattr(block, "id", None) or ""
+                                block_input = (
+                                    block.input
+                                    if isinstance(block.input, dict)
+                                    else {"_raw": block.input}
+                                )
+                                yield ToolUseFinalizedChunk(
+                                    tool_use_id=block_id,
+                                    tool=block.name,
+                                    input=block_input,
+                                )
+                                # Live signal for file-creation tools.
+                                # Only Write/Edit carry a file_path the
+                                # model committed to; Bash file creation
+                                # is captured at run-end via the
+                                # outputs/ directory walk instead.
+                                if block.name in ("Write", "Edit"):
+                                    file_chunk = _output_file_ready_chunk(
+                                        block.name, block_input, agent_cwd, outputs_dir,
+                                    )
+                                    if file_chunk is not None:
+                                        yield file_chunk
+
+                    elif isinstance(message, UserMessage):
+                        for block in message.content:
+                            if isinstance(block, ToolResultBlock):
+                                preview = _tool_result_preview(block)
+                                block_is_error = bool(getattr(block, "is_error", False))
+                                await self.events.emit_event(Event(
+                                    type="tool_result",
+                                    run_id=run_id,
+                                    payload={
+                                        "is_error": block_is_error,
+                                        "preview": preview,
+                                    },
+                                ))
+                                yield ToolResultChunk(
+                                    tool_use_id=getattr(block, "tool_use_id", "") or "",
+                                    is_error=block_is_error,
+                                    preview=preview,
+                                )
+
+                    elif isinstance(message, ResultMessage):
+                        result_text = message.result
+                        # If the user called motor.interrupt(), the SDK
+                        # closes the turn with is_error=True. That's
+                        # not a failure from the caller's perspective —
+                        # the dedicated `was_interrupted` flag carries
+                        # that signal, leaving is_error free for genuine
+                        # upstream/schema/etc errors.
+                        active_run = self._active_runs.get(run_id)
+                        interrupt_was_requested = (
+                            active_run is not None and active_run.interrupt_requested
+                        )
+                        is_error = (
+                            bool(message.is_error) and not interrupt_was_requested
+                        )
+                        n_turns = message.num_turns or 0
+                        total_cost = message.total_cost_usd or 0.0
+                        usage = getattr(message, "usage", None) or {}
+                        if isinstance(usage, dict):
+                            input_tokens = int(usage.get("input_tokens") or 0)
+                            output_tokens = int(usage.get("output_tokens") or 0)
+                        structured_raw = getattr(message, "structured_output", None)
+                        if task.output_schema is not None:
+                            if structured_raw is None:
+                                is_error = True
+                                error_reason = (
+                                    "output_schema set but CLI returned no "
+                                    "structured_output (model didn't emit a "
+                                    "schema-conforming payload)"
+                                )
+                            else:
+                                try:
+                                    output_data = task.output_schema.model_validate(
+                                        structured_raw,
+                                    )
+                                except ValidationError as ve:
                                     is_error = True
                                     error_reason = (
-                                        "output_schema set but CLI returned no "
-                                        "structured_output (model didn't emit a "
-                                        "schema-conforming payload)"
+                                        f"structured_output failed Pydantic "
+                                        f"validation against {task.output_schema.__name__}: {ve}"
                                     )
-                                else:
-                                    try:
-                                        output_data = task.output_schema.model_validate(
-                                            structured_raw,
-                                        )
-                                    except ValidationError as ve:
-                                        is_error = True
-                                        error_reason = (
-                                            f"structured_output failed Pydantic "
-                                            f"validation against {task.output_schema.__name__}: {ve}"
-                                        )
-                                        output_data = None
-                            await self.events.emit_event(Event(
-                                type="result",
-                                run_id=run_id,
-                                payload={
-                                    "is_error": is_error,
-                                    "n_turns": n_turns,
-                                    "cost_usd": total_cost,
-                                    "result_preview": (result_text or "")[:200],
-                                    "structured_output_present": structured_raw is not None,
-                                    "output_data_validated": output_data is not None,
-                                },
-                            ))
+                                    output_data = None
+                        await self.events.emit_event(Event(
+                            type="result",
+                            run_id=run_id,
+                            payload={
+                                "is_error": is_error,
+                                "n_turns": n_turns,
+                                "cost_usd": total_cost,
+                                "result_preview": (result_text or "")[:200],
+                                "structured_output_present": structured_raw is not None,
+                                "output_data_validated": output_data is not None,
+                            },
+                        ))
 
-                        else:
-                            await self.events.emit_event(Event(
-                                type="sdk_message",
-                                run_id=run_id,
-                                payload={"kind": kind},
-                            ))
+                    else:
+                        await self.events.emit_event(Event(
+                            type="sdk_message",
+                            run_id=run_id,
+                            payload={"kind": kind},
+                        ))
 
-            except Exception as e:  # noqa: BLE001
-                # Interrupt path: client.interrupt() raises an exception
-                # inside the receive loop on purpose. That's the SDK's
-                # signal to wind down the turn, not a failure — keep
-                # is_error=False, the metadata.was_interrupted flag and
-                # the DoneChunk carry the user-visible signal instead.
-                if self._interrupt_requested:
-                    await self.events.log(
-                        "INFO",
-                        "run interrupted by motor.interrupt()",
-                        run_id=run_id,
-                    )
-                else:
-                    is_error = True
-                    error_reason = repr(e)
-                    await self.events.log("ERROR", f"run failed: {e!r}", run_id=run_id)
-                    yield ErrorChunk(message=repr(e))
-            finally:
-                if self._proxy is not None:
-                    self._proxy.clear_active_run()
-                self._current_client = None
-                self._current_run_id = None
-
-            was_interrupted = self._interrupt_requested
-            self._interrupt_requested = False
-
-            duration = time.monotonic() - t0
-            metadata = RunMetadata(
-                run_id=run_id,
-                duration_s=round(duration, 3),
-                n_turns=n_turns,
-                n_tool_calls=n_tool_calls,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_cost_usd=total_cost,
-                is_error=is_error,
-                error_reason=error_reason,
-                was_interrupted=was_interrupted,
-            )
-
-            self._persist_trace(workspace_dir, metadata, collected, result_text)
-
-            await self.events.log(
-                "INFO",
-                f"run finished {run_id} duration={duration:.1f}s "
-                f"turns={n_turns} tools={n_tool_calls} cost=${total_cost:.4f} "
-                f"error={is_error}",
-                run_id=run_id,
-            )
-
-            output_files = discover_output_files(outputs_dir)
-
-            yield DoneChunk(
-                result=RunResult(
+        except Exception as e:  # noqa: BLE001
+            # Interrupt path: client.interrupt() raises an exception
+            # inside the receive loop on purpose. That's the SDK's
+            # signal to wind down the turn, not a failure — keep
+            # is_error=False, the metadata.was_interrupted flag and
+            # the DoneChunk carry the user-visible signal instead.
+            active_run = self._active_runs.get(run_id)
+            if active_run is not None and active_run.interrupt_requested:
+                await self.events.log(
+                    "INFO",
+                    "run interrupted by motor.interrupt()",
                     run_id=run_id,
-                    output_text=result_text,
-                    blocks=collected,
-                    metadata=metadata,
-                    audit_dir=audit_dir,
-                    workspace_dir=workspace_dir,
-                    output_data=output_data,
-                    output_files=output_files,
-                ),
-            )
+                )
+            else:
+                is_error = True
+                error_reason = repr(e)
+                await self.events.log("ERROR", f"run failed: {e!r}", run_id=run_id)
+                yield ErrorChunk(message=repr(e))
+        finally:
+            if self._proxy is not None:
+                self._proxy.unregister_run(run_id)
+
+        run_state = self._active_runs.pop(run_id, None)
+        was_interrupted = (
+            run_state is not None and run_state.interrupt_requested
+        )
+
+        duration = time.monotonic() - t0
+        metadata = RunMetadata(
+            run_id=run_id,
+            duration_s=round(duration, 3),
+            n_turns=n_turns,
+            n_tool_calls=n_tool_calls,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_cost_usd=total_cost,
+            is_error=is_error,
+            error_reason=error_reason,
+            was_interrupted=was_interrupted,
+        )
+
+        self._persist_trace(workspace_dir, metadata, collected, result_text)
+
+        await self.events.log(
+            "INFO",
+            f"run finished {run_id} duration={duration:.1f}s "
+            f"turns={n_turns} tools={n_tool_calls} cost=${total_cost:.4f} "
+            f"error={is_error}",
+            run_id=run_id,
+        )
+
+        output_files = discover_output_files(outputs_dir)
+
+        yield DoneChunk(
+            result=RunResult(
+                run_id=run_id,
+                output_text=result_text,
+                blocks=collected,
+                metadata=metadata,
+                audit_dir=audit_dir,
+                workspace_dir=workspace_dir,
+                output_data=output_data,
+                output_files=output_files,
+            ),
+        )
 
     # ── helpers ──────────────────────────────────────────────────────
 
@@ -816,6 +833,7 @@ class Motor:
         agent_cwd: Path,
         claude_dir: Path,
         api_key: str,
+        run_id: str,
         skills_allowed: Optional[list[str]] = None,
     ) -> ClaudeAgentOptions:
         env: dict[str, str] = {
@@ -854,7 +872,10 @@ class Motor:
             # .config.json — both work, env is just less ceremonial.
             env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
         if self._proxy is not None:
-            env["ANTHROPIC_BASE_URL"] = self._proxy.base_url
+            # Per-run path prefix: each concurrent run gets its own URL
+            # under /run/<id>/, so the proxy routes the request + audit
+            # dump to the correct slot without singleton state.
+            env["ANTHROPIC_BASE_URL"] = self._proxy.base_url_for_run(run_id)
             env["ANTHROPIC_AUTH_TOKEN"] = api_key
 
         # Resolve disallowed_tools: explicit None on the task → config default.
