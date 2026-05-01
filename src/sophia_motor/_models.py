@@ -132,6 +132,11 @@ class RunMetadata:
     total_cost_usd: float = 0.0
     is_error: bool = False
     error_reason: Optional[str] = None
+    # True when the run terminated because `motor.interrupt()` was called.
+    # `is_error` stays False: an interrupt is a deliberate user action, not
+    # an upstream failure. Inspect this field to render "interrupted" UI
+    # state distinct from both success and error.
+    was_interrupted: bool = False
 
 
 @dataclass

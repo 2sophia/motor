@@ -106,6 +106,12 @@ class Motor:
         self._proxy: Optional[ProxyServer] = None
         self._started = False
         self._run_lock = asyncio.Lock()
+        # Set while a run is in flight — used by `motor.interrupt()` to
+        # signal the SDK CLI subprocess of the active turn. None when no
+        # run is active (idempotent: interrupt() is a no-op then).
+        self._current_client: Optional[ClaudeSDKClient] = None
+        self._current_run_id: Optional[str] = None
+        self._interrupt_requested = False
 
         if self.config.console_log_enabled:
             self.events.on_log(default_console_logger)
@@ -135,6 +141,52 @@ class Motor:
             self._proxy = None
         self._started = False
         await self.events.log("INFO", "motor stopped")
+
+    # ── interrupt ────────────────────────────────────────────────────
+
+    async def interrupt(self, run_id: Optional[str] = None) -> bool:
+        """Interrupt the run currently in flight on this motor.
+
+        This is the "Ctrl+C" of an active run — a deliberate user action,
+        not an error. Distinct from `stop()` (which shuts the motor down).
+
+        Mechanics: signals the SDK CLI subprocess via `client.interrupt()`,
+        which exits the current turn. The `async with ClaudeSDKClient`
+        cleanup then closes the subprocess and the TCP to our proxy,
+        letting upstream abort. The active `motor.stream(task)` finishes
+        normally with a `DoneChunk` whose `result.metadata.was_interrupted`
+        is True (`is_error` stays False).
+
+        Args:
+            run_id: when provided, only interrupt if it matches the current
+                run. Race-condition guard for "user clicks stop, but their
+                old run already finished and a new one started" — passing
+                the run_id they saw on screen avoids interrupting the wrong
+                one. `None` (default) means "interrupt whatever is current".
+
+        Returns:
+            True if a run was actively interrupted, False if no run is
+            currently active or `run_id` did not match. Always idempotent;
+            never raises.
+        """
+        client = self._current_client
+        if client is None:
+            return False
+        if run_id is not None and run_id != self._current_run_id:
+            return False
+        self._interrupt_requested = True
+        try:
+            await client.interrupt()
+        except Exception as e:  # noqa: BLE001
+            await self.events.log(
+                "WARNING",
+                f"interrupt() raised: {e!r} (treating as best-effort)",
+                run_id=self._current_run_id,
+            )
+        await self.events.log(
+            "INFO", "interrupt requested", run_id=self._current_run_id,
+        )
+        return True
 
     # ── workspace cleanup ────────────────────────────────────────────
 
@@ -283,8 +335,11 @@ class Motor:
             active_tool_blocks: dict[int, dict] = {}
             streamed_tool_use_ids: set[str] = set()
 
+            self._interrupt_requested = False
+            self._current_run_id = run_id
             try:
                 async with ClaudeSDKClient(options=opts) as client:
+                    self._current_client = client
                     await client.query(prompt=task.prompt)
                     async for message in client.receive_response():
                         kind = type(message).__name__
@@ -449,7 +504,16 @@ class Motor:
 
                         elif isinstance(message, ResultMessage):
                             result_text = message.result
-                            is_error = bool(message.is_error)
+                            # If the user called motor.interrupt(), the SDK
+                            # closes the turn with is_error=True. That's
+                            # not a failure from the caller's perspective —
+                            # the dedicated `was_interrupted` flag carries
+                            # that signal, leaving is_error free for genuine
+                            # upstream/schema/etc errors.
+                            is_error = (
+                                bool(message.is_error)
+                                and not self._interrupt_requested
+                            )
                             n_turns = message.num_turns or 0
                             total_cost = message.total_cost_usd or 0.0
                             usage = getattr(message, "usage", None) or {}
@@ -498,13 +562,30 @@ class Motor:
                             ))
 
             except Exception as e:  # noqa: BLE001
-                is_error = True
-                error_reason = repr(e)
-                await self.events.log("ERROR", f"run failed: {e!r}", run_id=run_id)
-                yield ErrorChunk(message=repr(e))
+                # Interrupt path: client.interrupt() raises an exception
+                # inside the receive loop on purpose. That's the SDK's
+                # signal to wind down the turn, not a failure — keep
+                # is_error=False, the metadata.was_interrupted flag and
+                # the DoneChunk carry the user-visible signal instead.
+                if self._interrupt_requested:
+                    await self.events.log(
+                        "INFO",
+                        "run interrupted by motor.interrupt()",
+                        run_id=run_id,
+                    )
+                else:
+                    is_error = True
+                    error_reason = repr(e)
+                    await self.events.log("ERROR", f"run failed: {e!r}", run_id=run_id)
+                    yield ErrorChunk(message=repr(e))
             finally:
                 if self._proxy is not None:
                     self._proxy.clear_active_run()
+                self._current_client = None
+                self._current_run_id = None
+
+            was_interrupted = self._interrupt_requested
+            self._interrupt_requested = False
 
             duration = time.monotonic() - t0
             metadata = RunMetadata(
@@ -517,6 +598,7 @@ class Motor:
                 total_cost_usd=total_cost,
                 is_error=is_error,
                 error_reason=error_reason,
+                was_interrupted=was_interrupted,
             )
 
             self._persist_trace(workspace_dir, metadata, collected, result_text)
