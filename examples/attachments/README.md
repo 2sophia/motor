@@ -13,8 +13,13 @@ list:
 ## Minimal example
 
 ```python
+from pathlib import Path
+from sophia_motor import Motor, RunTask
+
+motor = Motor()
+
 result = await motor.run(RunTask(
-    prompt="Summarize the attached docs.",
+    prompt="Summarize the attached docs and list any errors in the logs.",
     tools=["Read", "Glob"],
     attachments=[
         Path("/abs/path/to/spec.pdf"),       # real file → hard-link
@@ -22,6 +27,7 @@ result = await motor.run(RunTask(
         {"config.json": '{"region": "eu"}'}, # inline → file written
     ],
 ))
+print(result.output_text)
 ```
 
 ## Why symlinks?

@@ -9,11 +9,18 @@ all the variance is in the `system` field.
 ## Minimal example
 
 ```python
-motor = Motor()  # reused across all three calls
+from sophia_motor import Motor, RunTask
+
+ANALYST     = "You are a senior analyst. Reply in three short bullets."
+FRIEND      = "You're a casual friend. Reply in one short paragraph."
+RUTHLESS_PM = "You are a ruthless PM. Reply in one terse verdict."
+QUESTION    = "Should we ship feature X next sprint?"
+
+motor = Motor()   # reused across all three calls
 
 for persona in [ANALYST, FRIEND, RUTHLESS_PM]:
     result = await motor.run(RunTask(
-        prompt=SAME_QUESTION,
+        prompt=QUESTION,
         system=persona,    # ← only thing that changes
     ))
     print(result.output_text)

@@ -5,6 +5,21 @@ Fan out N independent runs across N motor instances, all in parallel.
 ## Minimal example
 
 ```python
+import asyncio
+from typing import Literal
+from pydantic import BaseModel
+from sophia_motor import Motor, MotorConfig, RunTask
+
+class ToneVerdict(BaseModel):
+    tone: Literal["positive", "neutral", "negative"]
+    rationale: str
+
+reviews = [
+    "Best product I've ever bought, recommend to everyone.",
+    "It works but the packaging was terrible.",
+    "Defective on arrival, customer service unresponsive.",
+]
+
 async def classify(review: str) -> ToneVerdict:
     motor = Motor(MotorConfig(console_log_enabled=False))
     result = await motor.run(RunTask(

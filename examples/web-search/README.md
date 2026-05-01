@@ -10,6 +10,19 @@ run while every other web/agentic tool stays blocked.
 ## Minimal example
 
 ```python
+from pydantic import BaseModel
+from sophia_motor import Motor, RunTask
+
+class Source(BaseModel):
+    url: str
+    takeaway: str
+
+class WebBrief(BaseModel):
+    sources: list[Source]
+    summary: str
+
+motor = Motor()
+
 result = await motor.run(RunTask(
     prompt="What's new in Python 3.13? Cite sources.",
     tools=["WebSearch", "WebFetch"],   # opt-in — blocked by default

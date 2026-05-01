@@ -8,16 +8,22 @@ you ever see the response.
 ## Minimal example
 
 ```python
+from typing import Literal
+from pydantic import BaseModel
+from sophia_motor import Motor, RunTask
+
 class TicketTriage(BaseModel):
     category: Literal["billing", "auth", "ux", "perf"]
     priority: Literal["low", "normal", "high", "urgent"]
-    sentiment_score: float  # -1.0 .. 1.0
+    sentiment_score: float   # -1.0 .. 1.0
+
+motor = Motor()
 
 result = await motor.run(RunTask(
-    prompt="Triage this ticket: …",
+    prompt="Triage this ticket: 'I was charged twice this month, refund now'",
     output_schema=TicketTriage,
 ))
-triage: TicketTriage = result.output_data  # already validated
+triage: TicketTriage = result.output_data   # already validated
 print(triage.priority)
 ```
 

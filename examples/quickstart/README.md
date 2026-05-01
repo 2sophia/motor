@@ -7,6 +7,8 @@ API key are wired up correctly.
 ## Minimal example
 
 ```python
+from sophia_motor import Motor, RunTask
+
 motor = Motor()  # reads ANTHROPIC_API_KEY from env or ./.env
 
 result = await motor.run(RunTask(

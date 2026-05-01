@@ -7,11 +7,17 @@ that you want followed precisely — not general capability.
 ## Minimal example
 
 ```python
+from pathlib import Path
+from sophia_motor import Motor, RunTask
+
+motor = Motor()
+
 result = await motor.run(RunTask(
     prompt="Apply the gold-tier discount to a $1500 order.",
     tools=["Skill", "Bash"],            # Skill exposes the catalogue
     skills=Path("./skills_local/"),     # folder with one subdir per skill
 ))
+print(result.output_text)
 ```
 
 ## What this example shows

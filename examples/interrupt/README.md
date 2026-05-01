@@ -5,6 +5,17 @@ Cancel an in-flight run mid-execution — the "user clicks stop" pattern.
 ## Minimal example
 
 ```python
+import asyncio
+from sophia_motor import Motor, RunTask, DoneChunk
+
+motor = Motor()
+
+task = RunTask(
+    prompt="Read every file in attachments/ and write a long analysis.",
+    tools=["Glob", "Read"],
+    attachments={"a.txt": "...", "b.txt": "...", "c.txt": "..."},
+)
+
 async def consume():
     async for chunk in motor.stream(task):
         if isinstance(chunk, DoneChunk):

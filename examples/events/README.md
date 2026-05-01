@@ -7,6 +7,8 @@ your own logging, metrics, telemetry, or live UI on top of the motor.
 ## Minimal example
 
 ```python
+from sophia_motor import Motor, MotorConfig, RunTask
+
 motor = Motor(MotorConfig(console_log_enabled=False))
 
 @motor.on_event
@@ -17,7 +19,7 @@ async def on_event(event):
 async def on_log(rec):
     print(f"[{rec.level}] {rec.message}")
 
-await motor.run(RunTask(prompt="..."))
+await motor.run(RunTask(prompt="Pick a tool, use it, then summarize."))
 ```
 
 ## What this example shows

@@ -8,13 +8,26 @@ answer — all live.
 ## Minimal example
 
 ```python
+from sophia_motor import (
+    Motor, RunTask,
+    TextDeltaChunk, ToolUseStartChunk, DoneChunk,
+)
+
+motor = Motor()
+
+task = RunTask(
+    prompt="Read attachments/note.txt and summarize it.",
+    tools=["Read"],
+    attachments={"note.txt": "..."},
+)
+
 async for chunk in motor.stream(task):
     if isinstance(chunk, TextDeltaChunk):
         print(chunk.text, end="", flush=True)
     elif isinstance(chunk, ToolUseStartChunk):
         print(f"\n[{chunk.tool} …]")
     elif isinstance(chunk, DoneChunk):
-        return chunk.result   # final RunResult, same as motor.run()
+        result = chunk.result   # final RunResult, same as motor.run()
 ```
 
 ## Run
