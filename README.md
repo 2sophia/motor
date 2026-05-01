@@ -4,6 +4,7 @@
 # Sophia Motor
 
 **Smart functions with a brain inside.**
+
 **Inputs in. Pydantic out. Multi-turn agent in the middle.**
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org)
@@ -13,21 +14,15 @@
 
 </div>
 
-> ⚠️ **Alpha software.** A built-in `strict` guardrail is **on by default** — the agent's `Read`/`Edit`/`Glob`/`Grep`
-> are confined to the workspace, `Write` is restricted to `outputs/`, and `Bash` blocks dev/admin commands (`curl`,
-`wget`, `ssh`, `git`, `docker`, `pip`, `npm`, `sudo`, ...) plus `..` escapes, `/dev/tcp`, `bash -c`, `eval`/`exec`
-> patterns. This is the **first layer**, not the last. Audit dump, rate limits, content filtering, and a managed-sandbox
-> runtime are in active development. **Don't point it at production secrets or fully untrusted prompts without your own
-hardening on top** — yet.
-
 ---
 
 ## Why
 
 A normal LLM call is a **string in → string out** roulette.
-Pretty? Sometimes. Reliable enough to ship behind your API? Not really.
+Looks nice in a demo. Falls apart in production.
 
-**Sophia Motor** turns it into a **typed Python function**.
+**Sophia Motor** turns it into a **typed Python function** —
+one your code can actually trust.
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/hero.svg" alt="Sophia Motor — input, agent loop, typed output" width="100%"/>
@@ -49,6 +44,34 @@ satisfied — then hands you back **a real Python object you can `.attribute_acc
 
 Same motor, **N tasks**, each with its own schema. The agent does the magic; **your program stays in control of the
 contract**.
+
+---
+
+## Cost & control: pay for what you actually use
+
+The Claude Agent SDK out of the box ships every built-in tool, the entire bundled-skill catalogue, an identity block,
+and a billing header — on every single call. For a one-shot question this means thousands of cache-creation tokens you
+didn't ask for.
+
+`sophia-motor` is opinionated: **zero tools, zero skills, zero SDK noise** unless you explicitly opt in. Same model,
+same upstream API — the bill drops.
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/cost-vs-sdk.svg" alt="cost comparison: SDK default vs sophia-motor on the same minimal task" width="100%"/>
+</div>
+
+### The same call, two bills
+
+| What runs                       | Claude Agent SDK (default)                                                                                | sophia-motor (`Motor()`)                                                           |
+|---------------------------------|-----------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
+| Tools exposed to model          | every built-in (Read, Bash, WebFetch, …)                                                                  | **0** — you list them when you need them                                           |
+| Skills exposed to model         | the SDK's bundled catalogue (update-config, simplify, loop, claude-api, init, review, security-review, …) | **0** — only the skills you linked                                                 |
+| System blocks injected          | SDK identity + billing header + noise reminders                                                           | stripped at the proxy                                                              |
+| Cost on a 1-turn no-tool prompt | **$0.0498**                                                                                               | **$0.0030** (–94%)                                                                 |
+| Where you opt in                | nowhere (it's all on by default)                                                                          | `RunTask(tools=[...], skills=Path(...))` per call, or `MotorConfig.default_*` once |
+
+The numbers are from a live run measured 2026-05-01, `claude-opus-4-6`, same prompt and same provider — the only thing
+that changes is what the motor doesn't ship to the model.
 
 ---
 
@@ -84,32 +107,6 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 | 🔌 **Pip install. That's it.**      | `pip install sophia-motor`. No daemons, no infra, no servers to run.                                              |
 
 ---
-
-## Cost & control: pay for what you actually use
-
-The Claude Agent SDK out of the box ships every built-in tool, the entire bundled-skill catalogue, an identity block,
-and a billing header — on every single call. For a one-shot question this means thousands of cache-creation tokens you
-didn't ask for.
-
-`sophia-motor` is opinionated: **zero tools, zero skills, zero SDK noise** unless you explicitly opt in. Same model,
-same upstream API — the bill drops.
-
-<div align="center">
-  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/cost-vs-sdk.svg" alt="cost comparison: SDK default vs sophia-motor on the same minimal task" width="100%"/>
-</div>
-
-### The same call, two bills
-
-| What runs                       | Claude Agent SDK (default)                                                                                | sophia-motor (`Motor()`)                                                           |
-|---------------------------------|-----------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
-| Tools exposed to model          | every built-in (Read, Bash, WebFetch, …)                                                                  | **0** — you list them when you need them                                           |
-| Skills exposed to model         | the SDK's bundled catalogue (update-config, simplify, loop, claude-api, init, review, security-review, …) | **0** — only the skills you linked                                                 |
-| System blocks injected          | SDK identity + billing header + noise reminders                                                           | stripped at the proxy                                                              |
-| Cost on a 1-turn no-tool prompt | **$0.0498**                                                                                               | **$0.0030** (–94%)                                                                 |
-| Where you opt in                | nowhere (it's all on by default)                                                                          | `RunTask(tools=[...], skills=Path(...))` per call, or `MotorConfig.default_*` once |
-
-The numbers are from a live run measured 2026-05-01, `claude-opus-4-6`, same prompt and same provider — the only thing
-that changes is what the motor doesn't ship to the model.
 
 ### Why you might *still* pick the raw SDK
 
@@ -387,6 +384,13 @@ a, b = await asyncio.gather(m1.run(task_a), m2.run(task_b))
 A `PreToolUse` hook is wired in by default. It runs **before** every tool call and refuses unsafe ones, returning the
 reason as feedback so the agent can self-correct.
 
+> ⚠️ **Alpha software.** A built-in `strict` guardrail is **on by default** — the agent's `Read`/`Edit`/`Glob`/`Grep`
+> are confined to the workspace, `Write` is restricted to `outputs/`, and `Bash` blocks dev/admin commands (`curl`,
+`wget`, `ssh`, `git`, `docker`, `pip`, `npm`, `sudo`, ...) plus `..` escapes, `/dev/tcp`, `bash -c`, `eval`/`exec`
+> patterns. This is the **first layer**, not the last. Audit dump, rate limits, content filtering, and a managed-sandbox
+> runtime are in active development. **Don't point it at production secrets or fully untrusted prompts without your own
+hardening on top** — yet.
+
 ```python
 Motor(MotorConfig(guardrail="strict"))  # default — safe by default
 Motor(MotorConfig(guardrail="permissive"))  # blocks only sudo/exfil/escapes
@@ -477,6 +481,8 @@ To run the standalone smoke test against the real API:
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... .venv/bin/python tests/run_smoke.py
 ```
+
+---
 
 ## License & attribution
 
