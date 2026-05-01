@@ -5,6 +5,11 @@
 Public API:
     from sophia_motor import Motor, MotorConfig, RunTask, RunResult, clean_runs
 """
+from ._adapters import (
+    AnthropicAdapter,
+    UpstreamAdapter,
+    VLLMAdapter,
+)
 from ._chunks import (
     DoneChunk,
     ErrorChunk,
@@ -65,4 +70,8 @@ __all__ = [
     "OutputFileReadyChunk",
     "ErrorChunk",
     "DoneChunk",
+    # upstream adapters
+    "UpstreamAdapter",
+    "AnthropicAdapter",
+    "VLLMAdapter",
 ]

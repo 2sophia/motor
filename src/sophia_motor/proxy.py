@@ -32,6 +32,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from ._adapters import UpstreamAdapter, resolve_adapter
 from .events import Event
 
 if TYPE_CHECKING:
@@ -62,6 +63,11 @@ class ProxyServer:
     def __init__(self, config: "MotorConfig", events: "EventBus") -> None:
         self.config = config
         self.events = events
+        # Resolve the upstream adapter once at proxy creation. Accepts a
+        # preset name (string) or an UpstreamAdapter instance. The adapter
+        # owns provider-specific concerns (auth scheme, body shape, SSE
+        # cleanup) so the proxy core stays provider-agnostic.
+        self.adapter: UpstreamAdapter = resolve_adapter(config.upstream_adapter)
         # Active runs registered on this proxy. Keys are run_id strings,
         # values are per-run state. Multiple concurrent runs on the same
         # Motor coexist here without serialization.
@@ -178,6 +184,11 @@ class ProxyServer:
                 body, self.config.tool_description_overrides,
             )
 
+            # Provider-specific body transforms (sampling injection,
+            # max_tokens clamp, image-block stripping for text-only
+            # models, etc.). Anthropic adapter is no-op.
+            body = self.adapter.transform_request(body)
+
             state.req_counter += 1
             req_idx = state.req_counter
 
@@ -213,18 +224,21 @@ class ProxyServer:
             )
 
             # ── forward upstream ──
-            headers = _forward_headers(req, self.config)
-            target = f"{self.config.upstream_base_url}/v1/messages"
+            sdk_headers = {k.lower(): v for k, v in req.headers.items()}
+            headers = self.adapter.forward_headers(sdk_headers, self.config.api_key)
+            headers.setdefault("anthropic-version", self.config.anthropic_version)
+            target = self.adapter.forward_url(self.config.upstream_base_url)
+            verify = self.adapter.verify_ssl()
             is_stream = body.get("stream", False)
             timeout = httpx.Timeout(600.0, connect=15.0)
 
             if is_stream:
                 return StreamingResponse(
-                    self._stream_upstream(target, body, headers, req_idx, run_id, state),
+                    self._stream_upstream(target, body, headers, req_idx, run_id, state, verify),
                     media_type="text/event-stream",
                 )
 
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
                 upstream = await client.post(target, json=body, headers=headers)
 
             response_bytes = upstream.content
@@ -232,6 +246,8 @@ class ProxyServer:
                 response_body = json.loads(response_bytes)
             except Exception:
                 response_body = {"_raw": response_bytes.decode(errors="replace")}
+
+            response_body = self.adapter.transform_response(response_body)
 
             if self.config.proxy_dump_payloads:
                 _dump_json(
@@ -264,15 +280,21 @@ class ProxyServer:
 
     # ── streaming forward ────────────────────────────────────────────
 
-    async def _stream_upstream(self, target, body, headers, req_idx, run_id, state):
-        """Pipe upstream SSE chunks straight to the client; collect for dump."""
+    async def _stream_upstream(self, target, body, headers, req_idx, run_id, state, verify):
+        """Pipe upstream SSE chunks straight to the client; collect for dump.
+
+        Each chunk passes through `adapter.transform_sse_chunk` so a
+        provider can scrub artifacts (e.g. Qwen XML closer fragments)
+        before the SDK sees them. Default adapter is passthrough.
+        """
         timeout = httpx.Timeout(600.0, connect=15.0)
         chunks: list[bytes] = []
         usage_seen: dict = {}
         stop_reason: Optional[str] = None
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
             async with client.stream("POST", target, json=body, headers=headers) as upstream:
                 async for chunk in upstream.aiter_bytes():
+                    chunk = self.adapter.transform_sse_chunk(chunk)
                     chunks.append(chunk)
                     yield chunk
         full_text = b"".join(chunks).decode(errors="replace")
@@ -459,20 +481,6 @@ def _rewrite_tool_descriptions(body: dict, overrides: dict[str, str]) -> int:
             tool["description"] = overrides[name]
             count += 1
     return count
-
-
-def _forward_headers(req: Request, config) -> dict:
-    """Build outgoing headers: forward what's relevant + inject our api key."""
-    out: dict[str, str] = {}
-    for k in ("anthropic-version", "content-type", "anthropic-beta"):
-        v = req.headers.get(k)
-        if v:
-            out[k] = v
-    out.setdefault("anthropic-version", config.anthropic_version)
-    out.setdefault("content-type", "application/json")
-    if config.api_key:
-        out["x-api-key"] = config.api_key
-    return out
 
 
 def _dump_json(path: Path, data) -> None:

@@ -25,6 +25,7 @@ python main.py
 | 9  | [streaming](./streaming)                     | Render output token-by-token — `motor.stream(task)` typed chunks.        |
 | 10 | [interrupt](./interrupt)                     | Cancel an in-flight run — `motor.interrupt()` + `was_interrupted` flag.  |
 | 11 | [concurrency](./concurrency)                 | One motor, N runs in parallel via `asyncio.gather` — chat-backend pattern. |
+| 12 | [vllm](./vllm)                               | Self-hosted Qwen via vLLM — same motor, `VLLMAdapter` upstream.          |
 
 Every example uses the strict guardrail (the default), so the agent is
 sandboxed inside its per-run workspace from the first call.

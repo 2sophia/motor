@@ -120,7 +120,17 @@ class MotorConfig(BaseModel):
     )
     upstream_base_url: str = Field(
         default="https://api.anthropic.com",
-        description="Real Anthropic Messages API endpoint the proxy forwards to.",
+        description="Upstream endpoint the proxy forwards to. Defaults to Anthropic.",
+    )
+    upstream_adapter: Any = Field(
+        default="anthropic",
+        description=(
+            "Provider adapter that customizes the proxy → upstream hop. "
+            "Pass a string preset (`'anthropic'` default, `'vllm'`) or an "
+            "`UpstreamAdapter` instance for full control (custom auth, "
+            "body re-mapping, SSE cleanup, …). Subclass `UpstreamAdapter` "
+            "to support other providers without forking the proxy."
+        ),
     )
     anthropic_version: str = Field(
         default="2023-06-01",
