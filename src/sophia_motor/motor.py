@@ -29,6 +29,7 @@ import asyncio
 import errno
 import json
 import os
+import re
 import shutil
 import time
 import uuid
@@ -1098,16 +1099,34 @@ def _output_file_ready_chunk(
     )
 
 
+_TOOL_RESULT_REMINDER_RE = re.compile(
+    r"<system-reminder>.*?</system-reminder>\s*",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
 def _tool_result_preview(block: ToolResultBlock) -> str:
-    """Best-effort short preview of a tool_result block content."""
+    """Best-effort short preview of a tool_result block content.
+
+    Strips the `<system-reminder>...</system-reminder>` blocks the CLI
+    appends to tool_result content (live instructions to the model,
+    e.g. "remember to use the Skill tool"). Those reminders are noise
+    in a UI preview — surface only the actual tool output the user
+    wants to see.
+    """
     content = getattr(block, "content", None)
     if isinstance(content, str):
-        return content[:200]
-    if isinstance(content, list):
+        text = content
+    elif isinstance(content, list):
+        text = ""
         for c in content:
             if isinstance(c, dict) and c.get("type") == "text":
-                return (c.get("text") or "")[:200]
-    return ""
+                text = c.get("text") or ""
+                break
+    else:
+        return ""
+    cleaned = _TOOL_RESULT_REMINDER_RE.sub("", text).strip()
+    return cleaned[:200]
 
 
 # ─────────────────────────────────────────────────────────────────────────
