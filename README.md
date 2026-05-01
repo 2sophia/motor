@@ -113,24 +113,24 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 Pass any of these in `RunTask(tools=[...])`. The agent **only** sees what you list — `tools=[]` (the default) means pure
 reasoning, no actions.
 
-| Tool        | What it does                                                | Default                                  |
-|-------------|-------------------------------------------------------------|------------------------------------------|
-| `Read`      | Read a file under the run cwd                               | available                                |
-| `Edit`      | Modify a file under the run cwd                             | available                                |
-| `Write`     | Create files (guardrail confines to `outputs/`)             | available                                |
-| `Glob`      | Pattern-match filenames                                     | available                                |
-| `Grep`      | Pattern-match file content                                  | available                                |
-| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) | available                                |
-| `Skill`     | Invoke a `SKILL.md` skill linked into the run               | available                                |
-| `WebSearch` | Live internet search                                        | blocked — list it in `tools` to enable   |
-| `WebFetch`  | Fetch a URL to text/markdown                                | blocked — list it in `tools` to enable   |
+| Tool        | What it does                                                |
+|-------------|-------------------------------------------------------------|
+| `Read`      | Read a file under the run cwd                               |
+| `Edit`      | Modify a file under the run cwd                             |
+| `Write`     | Create files (guardrail confines to `outputs/`)             |
+| `Glob`      | Pattern-match filenames                                     |
+| `Grep`      | Pattern-match file content                                  |
+| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) |
+| `Skill`     | Invoke a `SKILL.md` skill linked into the run               |
+| `WebSearch` | Live internet search                                        |
+| `WebFetch`  | Fetch a URL to text/markdown                                |
 
-If a tool is in `MotorConfig.default_disallowed_tools` and you list it in `RunTask.tools`, your intent wins — the motor
-drops it from the resolved block list so the SDK actually exposes it. Beyond this list the SDK ships a few more tools
-(`Agent`, `TodoWrite`, plan-mode, notebook-edit, cron, …) — they're blocked by default and not yet validated
-end-to-end with the motor. Treat them as experimental until they appear here.
+`WebSearch` and `WebFetch` reach the live internet — the agent can follow links anywhere on the public web. Most runs
+don't need it; opt in when the task genuinely needs fresh information. See
+[`examples/web-search/`](examples/web-search/).
 
-See [`examples/web-search/`](examples/web-search/) for `WebSearch` + `WebFetch` in action.
+Beyond this list the SDK ships a few more experimental tools (`Agent`, `TodoWrite`, plan-mode, notebook-edit, cron, …)
+— they may work if you list them, but aren't validated end-to-end with the motor yet.
 
 ---
 
