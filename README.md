@@ -8,7 +8,7 @@
 **Inputs in. Pydantic out. Multi-turn agent in the middle.**
 
 [![PyPI](https://img.shields.io/pypi/v/sophia-motor.svg?cacheSeconds=300)](https://pypi.org/project/sophia-motor/)
-[![Downloads](https://img.shields.io/pypi/dm/sophia-motor.svg?cacheSeconds=300)](https://pypi.org/project/sophia-motor/)
+[![Downloads](https://static.pepy.tech/badge/sophia-motor/month)](https://pepy.tech/project/sophia-motor)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Powered by Claude](https://img.shields.io/badge/powered%20by-claude--agent--sdk-orange.svg)](https://github.com/anthropics/claude-agent-sdk-python)
