@@ -84,7 +84,7 @@ The Claude Agent SDK out of the box ships every built-in tool, the entire bundle
 `sophia-motor` is opinionated: **zero tools, zero skills, zero SDK noise** unless you explicitly opt in. Same model, same upstream API — the bill drops.
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/cost-savings.svg" alt="cost comparison: SDK default vs sophia-motor on the same minimal task" width="100%"/>
+  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/cost-vs-sdk.svg" alt="cost comparison: SDK default vs sophia-motor on the same minimal task" width="100%"/>
 </div>
 
 ### The same call, two bills
