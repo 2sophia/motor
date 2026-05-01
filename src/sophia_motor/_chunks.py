@@ -114,6 +114,25 @@ class ToolResultChunk(_ChunkBase):
     preview: str
 
 
+class OutputFileReadyChunk(_ChunkBase):
+    """The agent just wrote a file under `<run>/agent_cwd/outputs/`.
+
+    Emitted on `tool_use_finalized` for `Write` / `Edit` calls — the live
+    signal a UI uses to show "report.md ✓" the moment the call commits.
+
+    Note: file creation through `Bash` (e.g. `echo > outputs/x.txt`) is
+    NOT tracked here — those files only show up in the final
+    `RunResult.output_files` (full directory walk at run end).
+
+    `path` is `str` (not Path) so the chunk is JSON-serializable for
+    transports like SSE without custom encoders.
+    """
+    type: Literal["output_file_ready"] = "output_file_ready"
+    relative_path: str   # e.g. "report.md" — path under outputs/
+    path: str            # absolute path of the file in the run workspace
+    tool: str            # "Write" or "Edit"
+
+
 # ── fallback paths ───────────────────────────────────────────────────
 
 class TextBlockChunk(_ChunkBase):
@@ -158,6 +177,7 @@ StreamChunk = Annotated[
         ToolUseCompleteChunk,
         ToolUseFinalizedChunk,
         ToolResultChunk,
+        OutputFileReadyChunk,
         TextBlockChunk,
         ThinkingBlockChunk,
         ErrorChunk,

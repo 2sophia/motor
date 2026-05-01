@@ -3,6 +3,8 @@
 """Input/output dataclasses for `Motor.run`."""
 from __future__ import annotations
 
+import mimetypes
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -140,8 +142,103 @@ class RunMetadata:
 
 
 @dataclass
+class OutputFile:
+    """A file the agent wrote under `<run>/agent_cwd/outputs/`.
+
+    The `path` is an absolute path inside the run workspace. **The run
+    workspace is transient** — it lives until `motor.clean_runs()` or an
+    external cleanup wipes it. Persist the file somewhere durable
+    (`copy_to(...)` / `move_to(...)`) before that happens, otherwise the
+    bytes are gone.
+    """
+    path: Path
+    relative_path: str   # path relative to outputs/, e.g. "report.md"
+    size: int            # bytes
+    mime: str            # best-effort guess via mimetypes; "application/octet-stream" if unknown
+    ext: str             # file extension including the dot, lowercased; "" if none
+
+    def read_bytes(self) -> bytes:
+        """Read the file's raw bytes."""
+        return self.path.read_bytes()
+
+    def read_text(self, encoding: str = "utf-8") -> str:
+        """Read the file as text. Defaults to UTF-8."""
+        return self.path.read_text(encoding=encoding)
+
+    def copy_to(self, dest: Path | str) -> Path:
+        """Copy the file to `dest` (a directory or a full file path).
+
+        - If `dest` is an existing directory, the file lands at
+          `dest / self.relative_path` (parents created as needed).
+        - If `dest` is a non-existing path, it's treated as the full
+          destination filename.
+
+        Returns the absolute destination path. Use this to persist
+        outputs before the run workspace is cleaned up.
+        """
+        dest_path = Path(dest)
+        if dest_path.is_dir():
+            dest_path = dest_path / self.relative_path
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.path, dest_path)
+        return dest_path.resolve()
+
+    def move_to(self, dest: Path | str) -> Path:
+        """Move the file to `dest`. Same dest semantics as `copy_to`.
+
+        After this call, `self.path` no longer points at a real file —
+        the OutputFile entry is essentially consumed. Use when you don't
+        need the run workspace copy at all (memory-bound pipelines,
+        immediate hand-off to S3/blob/db).
+        """
+        dest_path = Path(dest)
+        if dest_path.is_dir():
+            dest_path = dest_path / self.relative_path
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(self.path), str(dest_path))
+        return dest_path.resolve()
+
+
+def _output_file_from_path(outputs_dir: Path, file_path: Path) -> OutputFile:
+    """Build an OutputFile from an absolute `file_path` under `outputs_dir`."""
+    rel = file_path.relative_to(outputs_dir)
+    ext = file_path.suffix.lower()
+    mime, _ = mimetypes.guess_type(str(file_path))
+    return OutputFile(
+        path=file_path,
+        relative_path=str(rel),
+        size=file_path.stat().st_size,
+        mime=mime or "application/octet-stream",
+        ext=ext,
+    )
+
+
+def discover_output_files(outputs_dir: Path) -> list[OutputFile]:
+    """Walk `outputs_dir` and return one OutputFile per regular file.
+
+    Skips directories, symlinks, and special files. Stable ordering:
+    sorted by relative path so a re-run with the same content yields
+    the same list.
+    """
+    if not outputs_dir.exists():
+        return []
+    files: list[OutputFile] = []
+    for p in sorted(outputs_dir.rglob("*")):
+        if p.is_file() and not p.is_symlink():
+            files.append(_output_file_from_path(outputs_dir, p))
+    return files
+
+
+@dataclass
 class RunResult:
-    """Final result of a Motor.run()."""
+    """Final result of a Motor.run().
+
+    Note on `output_files`: the run workspace under `~/.sophia-motor/runs/`
+    is **transient**. `motor.clean_runs()` wipes it; cron sweeps or
+    container teardowns may too. If the agent wrote a file you care
+    about, persist it now via `output_file.copy_to(...)` —
+    don't assume the path will be there in an hour.
+    """
     run_id: str
     output_text: Optional[str]
     blocks: list[dict]
@@ -152,3 +249,8 @@ class RunResult:
     # AND the CLI returned a schema-conforming structured_output.
     # ValidationError → metadata.is_error = True, output_data = None.
     output_data: Optional[BaseModel] = None
+    # Files the agent wrote under `<run>/agent_cwd/outputs/`. Discovered
+    # at the end of the run via a directory walk — covers Write, Edit,
+    # and Bash-driven file creation alike. Empty list if nothing was
+    # written (or if `outputs/` doesn't exist for this run).
+    output_files: list[OutputFile] = field(default_factory=list)

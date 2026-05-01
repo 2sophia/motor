@@ -9,6 +9,7 @@ from ._chunks import (
     DoneChunk,
     ErrorChunk,
     InitChunk,
+    OutputFileReadyChunk,
     RunStartedChunk,
     StreamChunk,
     TextBlockChunk,
@@ -21,7 +22,7 @@ from ._chunks import (
     ToolUseFinalizedChunk,
     ToolUseStartChunk,
 )
-from ._models import RunMetadata, RunResult, RunTask
+from ._models import OutputFile, RunMetadata, RunResult, RunTask
 from .cleanup import clean_runs
 from .config import MotorConfig
 from .events import (
@@ -41,6 +42,7 @@ __all__ = [
     "RunTask",
     "RunResult",
     "RunMetadata",
+    "OutputFile",
     "Event",
     "LogRecord",
     "EventBus",
@@ -60,6 +62,7 @@ __all__ = [
     "ToolUseCompleteChunk",
     "ToolUseFinalizedChunk",
     "ToolResultChunk",
+    "OutputFileReadyChunk",
     "ErrorChunk",
     "DoneChunk",
 ]

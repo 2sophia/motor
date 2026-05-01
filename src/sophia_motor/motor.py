@@ -52,6 +52,7 @@ from ._chunks import (
     DoneChunk,
     ErrorChunk,
     InitChunk,
+    OutputFileReadyChunk,
     RunStartedChunk,
     StreamChunk,
     TextBlockChunk,
@@ -64,7 +65,7 @@ from ._chunks import (
     ToolUseFinalizedChunk,
     ToolUseStartChunk,
 )
-from ._models import RunMetadata, RunResult, RunTask
+from ._models import RunMetadata, RunResult, RunTask, discover_output_files
 from ._partial_json import parse_partial_tool_input
 from .cleanup import clean_runs as _clean_runs_helper
 from .config import MotorConfig
@@ -280,6 +281,8 @@ class Motor:
             if self._proxy is not None:
                 self._proxy.set_active_run(run_id, audit_dir)
 
+            outputs_dir = agent_cwd / "outputs"
+
             opts = self._build_sdk_options(
                 task, agent_cwd, claude_dir, api_key,
                 skills_allowed=list(skills_manifest.keys()),
@@ -473,15 +476,27 @@ class Motor:
                                         },
                                     ))
                                     block_id = getattr(block, "id", None) or ""
+                                    block_input = (
+                                        block.input
+                                        if isinstance(block.input, dict)
+                                        else {"_raw": block.input}
+                                    )
                                     yield ToolUseFinalizedChunk(
                                         tool_use_id=block_id,
                                         tool=block.name,
-                                        input=(
-                                            block.input
-                                            if isinstance(block.input, dict)
-                                            else {"_raw": block.input}
-                                        ),
+                                        input=block_input,
                                     )
+                                    # Live signal for file-creation tools.
+                                    # Only Write/Edit carry a file_path the
+                                    # model committed to; Bash file creation
+                                    # is captured at run-end via the
+                                    # outputs/ directory walk instead.
+                                    if block.name in ("Write", "Edit"):
+                                        file_chunk = _output_file_ready_chunk(
+                                            block.name, block_input, agent_cwd, outputs_dir,
+                                        )
+                                        if file_chunk is not None:
+                                            yield file_chunk
 
                         elif isinstance(message, UserMessage):
                             for block in message.content:
@@ -611,6 +626,8 @@ class Motor:
                 run_id=run_id,
             )
 
+            output_files = discover_output_files(outputs_dir)
+
             yield DoneChunk(
                 result=RunResult(
                     run_id=run_id,
@@ -620,6 +637,7 @@ class Motor:
                     audit_dir=audit_dir,
                     workspace_dir=workspace_dir,
                     output_data=output_data,
+                    output_files=output_files,
                 ),
             )
 
@@ -917,6 +935,41 @@ class Motor:
             sdk_kwargs["extra_args"] = extra_args
 
         return ClaudeAgentOptions(**sdk_kwargs)
+
+
+def _output_file_ready_chunk(
+    tool_name: str,
+    tool_input: dict,
+    agent_cwd: Path,
+    outputs_dir: Path,
+) -> Optional[OutputFileReadyChunk]:
+    """Build an OutputFileReadyChunk if the tool wrote a file under outputs/.
+
+    Returns None when:
+      - input has no file_path (malformed)
+      - the resolved path is not under `outputs_dir` (the guard would have
+        blocked it; we double-check so the chunk is never misleading)
+
+    The path resolution mirrors what the SDK does: relative paths are
+    interpreted against the agent's cwd, absolute paths used as-is.
+    """
+    raw = tool_input.get("file_path")
+    if not isinstance(raw, str) or not raw:
+        return None
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = agent_cwd / candidate
+    try:
+        resolved = candidate.resolve()
+        outputs_resolved = outputs_dir.resolve()
+        rel = resolved.relative_to(outputs_resolved)
+    except (OSError, ValueError):
+        return None
+    return OutputFileReadyChunk(
+        relative_path=str(rel),
+        path=str(resolved),
+        tool=tool_name,
+    )
 
 
 def _tool_result_preview(block: ToolResultBlock) -> str:
