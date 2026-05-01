@@ -4,6 +4,22 @@ Listen to the agent in flight. Every tool call, every assistant message,
 every proxy request emits a structured event. This is how you build
 your own logging, metrics, telemetry, or live UI on top of the motor.
 
+## Minimal example
+
+```python
+motor = Motor(MotorConfig(console_log_enabled=False))
+
+@motor.on_event
+async def on_event(event):
+    print(f"[{event.type}] {event.payload}")
+
+@motor.on_log
+async def on_log(rec):
+    print(f"[{rec.level}] {rec.message}")
+
+await motor.run(RunTask(prompt="..."))
+```
+
 ## What this example shows
 
 - `@motor.on_event` to subscribe to structured events.

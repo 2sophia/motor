@@ -5,6 +5,20 @@ final answer. Same task as the other examples, but you watch the model
 think, open a tool, fill in the input, get the result, and write the
 answer — all live.
 
+## Minimal example
+
+```python
+async for chunk in motor.stream(task):
+    if isinstance(chunk, TextDeltaChunk):
+        print(chunk.text, end="", flush=True)
+    elif isinstance(chunk, ToolUseStartChunk):
+        print(f"\n[{chunk.tool} …]")
+    elif isinstance(chunk, DoneChunk):
+        return chunk.result   # final RunResult, same as motor.run()
+```
+
+## Run
+
 ```bash
 pip install sophia-motor
 export ANTHROPIC_API_KEY=sk-ant-...

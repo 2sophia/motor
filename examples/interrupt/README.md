@@ -2,6 +2,22 @@
 
 Cancel an in-flight run mid-execution — the "user clicks stop" pattern.
 
+## Minimal example
+
+```python
+async def consume():
+    async for chunk in motor.stream(task):
+        if isinstance(chunk, DoneChunk):
+            print("interrupted:", chunk.result.metadata.was_interrupted)
+
+consumer = asyncio.create_task(consume())
+await asyncio.sleep(2)
+await motor.interrupt()   # cancels the in-flight run cleanly
+await consumer
+```
+
+## Run
+
 ```bash
 pip install sophia-motor
 export ANTHROPIC_API_KEY=sk-ant-...

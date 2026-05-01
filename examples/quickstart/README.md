@@ -4,6 +4,17 @@ The smallest possible sophia-motor program: one prompt, one motor, one
 answer. No tools, no schema, no skills. Verifies that your install and
 API key are wired up correctly.
 
+## Minimal example
+
+```python
+motor = Motor()  # reads ANTHROPIC_API_KEY from env or ./.env
+
+result = await motor.run(RunTask(
+    prompt="Explain in two sentences what makes a good API design.",
+))
+print(result.output_text)
+```
+
 ## Run
 
 ```bash

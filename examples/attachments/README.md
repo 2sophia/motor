@@ -10,6 +10,20 @@ list:
    useful for fixtures, tests, and tiny configs you don't want in a
    separate file.
 
+## Minimal example
+
+```python
+result = await motor.run(RunTask(
+    prompt="Summarize the attached docs.",
+    tools=["Read", "Glob"],
+    attachments=[
+        Path("/abs/path/to/spec.pdf"),       # real file → hard-link
+        Path("/abs/path/to/logs/"),          # real dir  → hard-link tree
+        {"config.json": '{"region": "eu"}'}, # inline → file written
+    ],
+))
+```
+
 ## Why symlinks?
 
 By default Path-based attachments are linked, not copied. This costs

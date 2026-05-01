@@ -2,6 +2,20 @@
 
 Fan out N independent runs across N motor instances, all in parallel.
 
+## Minimal example
+
+```python
+async def classify(review: str) -> ToneVerdict:
+    motor = Motor(MotorConfig(console_log_enabled=False))
+    result = await motor.run(RunTask(
+        prompt=f"Classify the tone of: {review}",
+        output_schema=ToneVerdict,
+    ))
+    return result.output_data
+
+verdicts = await asyncio.gather(*(classify(r) for r in reviews))
+```
+
 ## Why N motors instead of one?
 
 A single Motor handles one run at a time — its proxy is bound to the

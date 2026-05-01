@@ -7,6 +7,19 @@ a typed brief with citations.
 listing them explicitly in `tools=[...]` flips them on for this single
 run while every other web/agentic tool stays blocked.
 
+## Minimal example
+
+```python
+result = await motor.run(RunTask(
+    prompt="What's new in Python 3.13? Cite sources.",
+    tools=["WebSearch", "WebFetch"],   # opt-in — blocked by default
+    output_schema=WebBrief,
+))
+brief: WebBrief = result.output_data
+for src in brief.sources:
+    print(src.url, "—", src.takeaway)
+```
+
 ## Run
 
 ```bash

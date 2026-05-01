@@ -4,6 +4,16 @@ Load a folder of skills and let the agent pick the right one. Skills
 are how you give the model **task-specific operating instructions**
 that you want followed precisely — not general capability.
 
+## Minimal example
+
+```python
+result = await motor.run(RunTask(
+    prompt="Apply the gold-tier discount to a $1500 order.",
+    tools=["Skill", "Bash"],            # Skill exposes the catalogue
+    skills=Path("./skills_local/"),     # folder with one subdir per skill
+))
+```
+
 ## What this example shows
 
 Three skills are bundled in `skills_local/`:

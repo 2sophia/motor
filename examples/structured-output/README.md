@@ -5,6 +5,22 @@ object that already conforms to your `BaseModel`: enums, numeric ranges,
 string patterns, and nested objects are all enforced server-side before
 you ever see the response.
 
+## Minimal example
+
+```python
+class TicketTriage(BaseModel):
+    category: Literal["billing", "auth", "ux", "perf"]
+    priority: Literal["low", "normal", "high", "urgent"]
+    sentiment_score: float  # -1.0 .. 1.0
+
+result = await motor.run(RunTask(
+    prompt="Triage this ticket: …",
+    output_schema=TicketTriage,
+))
+triage: TicketTriage = result.output_data  # already validated
+print(triage.priority)
+```
+
 ## What this example shows
 
 - A `TicketTriage` schema with five typed fields (enums + bounded float

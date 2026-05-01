@@ -6,6 +6,19 @@ persona, the tone, and the shape of the answer. The same `Motor()`
 instance answers three identical prompts in three different voices —
 all the variance is in the `system` field.
 
+## Minimal example
+
+```python
+motor = Motor()  # reused across all three calls
+
+for persona in [ANALYST, FRIEND, RUTHLESS_PM]:
+    result = await motor.run(RunTask(
+        prompt=SAME_QUESTION,
+        system=persona,    # ← only thing that changes
+    ))
+    print(result.output_text)
+```
+
 ## What this example shows
 
 - A single `Motor()` reused across calls (no per-call setup).
