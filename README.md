@@ -113,17 +113,20 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 Pass any of these in `RunTask(tools=[...])`. The agent **only** sees what you list — `tools=[]` (the default) means pure
 reasoning, no actions.
 
-| Tool        | What it does                                                | Status      |
-|-------------|-------------------------------------------------------------|-------------|
-| `Read`      | Read a file under the run cwd                               | ✅ available |
-| `Edit`      | Modify a file under the run cwd                             | ✅ available |
-| `Write`     | Create files (guardrail confines to `outputs/`)             | ✅ available |
-| `Glob`      | Pattern-match filenames                                     | ✅ available |
-| `Grep`      | Pattern-match file content                                  | ✅ available |
-| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) | ✅ available |
-| `Skill`     | Invoke a `SKILL.md` skill linked into the run               | ✅ available |
-| `WebSearch` | Live internet search                                        | ✅ available |
-| `WebFetch`  | Fetch a URL to text/markdown                                | ✅ available |
+<table width="100%">
+<thead><tr><th align="left">Tool</th><th align="left">What it does</th><th align="left">Status</th></tr></thead>
+<tbody>
+<tr><td><code>Read</code></td><td>Read a file under the run cwd</td><td>available</td></tr>
+<tr><td><code>Edit</code></td><td>Modify a file under the run cwd</td><td>available</td></tr>
+<tr><td><code>Write</code></td><td>Create files (guardrail confines to <code>outputs/</code>)</td><td>available</td></tr>
+<tr><td><code>Glob</code></td><td>Pattern-match filenames</td><td>available</td></tr>
+<tr><td><code>Grep</code></td><td>Pattern-match file content</td><td>available</td></tr>
+<tr><td><code>Bash</code></td><td>Run shell commands (guardrail-filtered: no curl/git/sudo/…)</td><td>available</td></tr>
+<tr><td><code>Skill</code></td><td>Invoke a <code>SKILL.md</code> skill linked into the run</td><td>available</td></tr>
+<tr><td><code>WebSearch</code></td><td>Live internet search</td><td>available</td></tr>
+<tr><td><code>WebFetch</code></td><td>Fetch a URL to text/markdown</td><td>available</td></tr>
+</tbody>
+</table>
 
 `WebSearch` and `WebFetch` reach the live internet — the agent can follow links anywhere on the public web. Most runs
 don't need it; opt in when the task genuinely needs fresh information. See
