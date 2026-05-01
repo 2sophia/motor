@@ -66,6 +66,26 @@ def test_output_schema_omitted_when_not_set(tmp_path: Path) -> None:
         assert "json-schema" not in opts.extra_args
 
 
+def test_explicit_tool_drops_from_default_disallowed(tmp_path: Path) -> None:
+    """If the caller lists `WebSearch` in `tools`, the conflict with the
+    motor's default block list resolves in favor of the caller — the
+    tool is exposed and not blocked. The rest of the block list stays."""
+    motor = Motor(MotorConfig(api_key="dummy", workspace_root=tmp_path,
+                              console_log_enabled=False))
+    task = RunTask(prompt="test", tools=["WebSearch", "WebFetch"])
+    opts = motor._build_sdk_options(
+        task,
+        agent_cwd=tmp_path / "agent",
+        claude_dir=tmp_path / ".claude",
+        api_key="dummy",
+    )
+    assert "WebSearch" not in opts.disallowed_tools
+    assert "WebFetch" not in opts.disallowed_tools
+    # Other defaults unaffected
+    assert "Agent" in opts.disallowed_tools
+    assert "TodoWrite" in opts.disallowed_tools
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Live — require ANTHROPIC_API_KEY
 # ─────────────────────────────────────────────────────────────────────────

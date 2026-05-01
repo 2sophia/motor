@@ -108,6 +108,30 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 | 🪡 **Defaults + per-task override** | Configure the boilerplate once on `MotorConfig`, vary only what changes per call.                                 |
 | 🔌 **Pip install. That's it.**      | `pip install sophia-motor`. No daemons, no infra, no servers to run.                                              |
 
+### Tools the agent can pick from
+
+Pass any of these in `RunTask(tools=[...])`. The agent **only** sees what you list — `tools=[]` (the default) means pure
+reasoning, no actions.
+
+| Tool        | What it does                                                | Default                                  |
+|-------------|-------------------------------------------------------------|------------------------------------------|
+| `Read`      | Read a file under the run cwd                               | available                                |
+| `Edit`      | Modify a file under the run cwd                             | available                                |
+| `Write`     | Create files (guardrail confines to `outputs/`)             | available                                |
+| `Glob`      | Pattern-match filenames                                     | available                                |
+| `Grep`      | Pattern-match file content                                  | available                                |
+| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) | available                                |
+| `Skill`     | Invoke a `SKILL.md` skill linked into the run               | available                                |
+| `WebSearch` | Live internet search                                        | blocked — list it in `tools` to enable   |
+| `WebFetch`  | Fetch a URL to text/markdown                                | blocked — list it in `tools` to enable   |
+
+If a tool is in `MotorConfig.default_disallowed_tools` and you list it in `RunTask.tools`, your intent wins — the motor
+drops it from the resolved block list so the SDK actually exposes it. Beyond this list the SDK ships a few more tools
+(`Agent`, `TodoWrite`, plan-mode, notebook-edit, cron, …) — they're blocked by default and not yet validated
+end-to-end with the motor. Treat them as experimental until they appear here.
+
+See [`examples/web-search/`](examples/web-search/) for `WebSearch` + `WebFetch` in action.
+
 ---
 
 ### Why you might *still* pick the raw SDK

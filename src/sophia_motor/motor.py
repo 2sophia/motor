@@ -603,6 +603,14 @@ class Motor:
         else:
             disallowed = list(task.disallowed_tools)
 
+        # Conflict resolution: a tool explicitly listed in `tools` is the
+        # caller's stated intent — drop it from the resolved disallowed
+        # set so the SDK doesn't expose-and-then-block it (which would
+        # waste tokens and surprise the model). The block list still
+        # protects every tool the caller did NOT opt into.
+        if task.tools:
+            disallowed = [t for t in disallowed if t not in task.tools]
+
         # `tools` (hard whitelist) only set when explicitly provided.
         # SDK signature: list[str] | ToolsPreset | None. Pass-through.
         sdk_kwargs: dict = {
