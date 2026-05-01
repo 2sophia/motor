@@ -5,6 +5,22 @@
 Public API:
     from sophia_motor import Motor, MotorConfig, RunTask, RunResult, clean_runs
 """
+from ._chunks import (
+    DoneChunk,
+    ErrorChunk,
+    InitChunk,
+    RunStartedChunk,
+    StreamChunk,
+    TextBlockChunk,
+    TextDeltaChunk,
+    ThinkingBlockChunk,
+    ThinkingDeltaChunk,
+    ToolResultChunk,
+    ToolUseCompleteChunk,
+    ToolUseDeltaChunk,
+    ToolUseFinalizedChunk,
+    ToolUseStartChunk,
+)
 from ._models import RunMetadata, RunResult, RunTask
 from .cleanup import clean_runs
 from .config import MotorConfig
@@ -31,4 +47,19 @@ __all__ = [
     "default_console_logger",
     "default_console_event_logger",
     "clean_runs",
+    # streaming chunks
+    "StreamChunk",
+    "RunStartedChunk",
+    "InitChunk",
+    "TextDeltaChunk",
+    "TextBlockChunk",
+    "ThinkingDeltaChunk",
+    "ThinkingBlockChunk",
+    "ToolUseStartChunk",
+    "ToolUseDeltaChunk",
+    "ToolUseCompleteChunk",
+    "ToolUseFinalizedChunk",
+    "ToolResultChunk",
+    "ErrorChunk",
+    "DoneChunk",
 ]

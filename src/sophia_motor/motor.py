@@ -30,7 +30,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 from pydantic import BaseModel, ValidationError
 
@@ -46,9 +46,26 @@ from claude_agent_sdk import (
     ToolUseBlock,
     UserMessage,
 )
-from claude_agent_sdk.types import HookMatcher
+from claude_agent_sdk.types import HookMatcher, StreamEvent
 
+from ._chunks import (
+    DoneChunk,
+    ErrorChunk,
+    InitChunk,
+    RunStartedChunk,
+    StreamChunk,
+    TextBlockChunk,
+    TextDeltaChunk,
+    ThinkingBlockChunk,
+    ThinkingDeltaChunk,
+    ToolResultChunk,
+    ToolUseCompleteChunk,
+    ToolUseDeltaChunk,
+    ToolUseFinalizedChunk,
+    ToolUseStartChunk,
+)
 from ._models import RunMetadata, RunResult, RunTask
+from ._partial_json import parse_partial_tool_input
 from .cleanup import clean_runs as _clean_runs_helper
 from .config import MotorConfig
 from .guard import make_guard_hook
@@ -147,24 +164,45 @@ class Motor:
             dry_run=dry_run,
         )
 
-    # ── run ──────────────────────────────────────────────────────────
+    # ── run / stream ─────────────────────────────────────────────────
 
     async def run(self, task: RunTask) -> RunResult:
+        """Execute a task and return the final `RunResult`.
+
+        Thin wrapper around `stream(task)`: consumes the chunk stream and
+        returns the `RunResult` carried by the terminal `DoneChunk`. Use
+        `run()` when you only care about the final answer; use `stream()`
+        when you want live tokens / tool-use deltas in your UI.
+        """
+        final: Optional[RunResult] = None
+        async for chunk in self.stream(task):
+            if isinstance(chunk, DoneChunk):
+                final = chunk.result
+        assert final is not None, "stream() must always end with a DoneChunk"
+        return final
+
+    async def stream(self, task: RunTask) -> AsyncIterator[StreamChunk]:
+        """Run a task and yield typed stream chunks live.
+
+        Yields a sequence of `StreamChunk` (discriminated union on `type`):
+        `run_started`, `init`, `text_delta`, `thinking_delta`,
+        `tool_use_start`, `tool_use_delta`, `tool_use_complete`,
+        `tool_use_finalized`, `tool_result`, optional `text_block` /
+        `thinking_block` fallbacks, optional `error`, and a single terminal
+        `done` carrying the final `RunResult`. The stream ALWAYS ends with
+        `done`, including on error.
+        """
         # Lazy auto-start: the proxy boots on first run, stays alive across
-        # subsequent runs, and dies when the process terminates. Junior-
-        # friendly: `Motor()` at module top-level + `await motor.run(...)`
-        # anywhere — no lifecycle ceremony required.
+        # subsequent runs, and dies when the process terminates.
         if not self._started:
             await self.start()
         api_key = self.config.require_api_key()
 
         # Apply MotorConfig defaults to any RunTask field left at None / [].
-        # Override semantics: full replacement, never merge.
         task = self._apply_config_defaults(task)
 
         # Pre-flight validation BEFORE we mint a run_id, set up workspace,
-        # bind the proxy, or call the SDK. Better to fail loud here than to
-        # spend tokens on a doomed run.
+        # bind the proxy, or call the SDK. Fail loud here, not on tokens spent.
         attachments_items = _normalize_to_list(task.attachments)
         skills_items = _normalize_to_list(task.skills)
         _validate_attachments(attachments_items)
@@ -212,6 +250,12 @@ class Motor:
                 run_id=run_id,
                 model=self.config.model,
             )
+            yield RunStartedChunk(
+                run_id=run_id,
+                model=self.config.model,
+                prompt_preview=task.prompt[:200],
+                max_turns=opts.max_turns or self.config.default_max_turns,
+            )
 
             t0 = time.monotonic()
             collected: list[dict] = []
@@ -226,18 +270,111 @@ class Motor:
             output_data: Optional[BaseModel] = None
             structured_raw: Any = None
 
+            # Per-turn streaming state (reset on each `message_start`):
+            # - text_streamed_in_turn / thinking_streamed_in_turn: skip the
+            #   AssistantMessage Text/ThinkingBlock fallback chunk if we've
+            #   already streamed the content as deltas
+            # - active_tool_blocks[idx]: tool_use blocks mid-stream; we
+            #   accumulate `input_json_delta` partials per index
+            # - streamed_tool_use_ids: ids that streamed via deltas, so the
+            #   AssistantMessage ToolUseBlock dedups to a `tool_use_finalized`
+            text_streamed_in_turn = False
+            thinking_streamed_in_turn = False
+            active_tool_blocks: dict[int, dict] = {}
+            streamed_tool_use_ids: set[str] = set()
+
             try:
                 async with ClaudeSDKClient(options=opts) as client:
                     await client.query(prompt=task.prompt)
                     async for message in client.receive_response():
                         kind = type(message).__name__
 
+                        if isinstance(message, StreamEvent):
+                            # Raw API delta path. Drives the live UI:
+                            # text/thinking chunks, tool_use open/delta/close.
+                            event = message.event or {}
+                            etype = event.get("type")
+
+                            if etype == "message_start":
+                                text_streamed_in_turn = False
+                                thinking_streamed_in_turn = False
+                                active_tool_blocks.clear()
+                                streamed_tool_use_ids.clear()
+
+                            elif etype == "content_block_start":
+                                idx = event.get("index")
+                                block = event.get("content_block") or {}
+                                if block.get("type") == "tool_use":
+                                    tool_use_id = block.get("id", "")
+                                    tool_name = block.get("name", "")
+                                    active_tool_blocks[idx] = {
+                                        "id": tool_use_id,
+                                        "name": tool_name,
+                                        "partial_json": "",
+                                    }
+                                    streamed_tool_use_ids.add(tool_use_id)
+                                    yield ToolUseStartChunk(
+                                        tool_use_id=tool_use_id,
+                                        tool=tool_name,
+                                        index=idx,
+                                    )
+
+                            elif etype == "content_block_delta":
+                                idx = event.get("index")
+                                delta = event.get("delta") or {}
+                                dtype = delta.get("type")
+                                if dtype == "text_delta":
+                                    chunk = delta.get("text") or ""
+                                    if chunk:
+                                        text_streamed_in_turn = True
+                                        yield TextDeltaChunk(text=chunk)
+                                elif dtype == "input_json_delta":
+                                    partial = delta.get("partial_json") or ""
+                                    tool_state = active_tool_blocks.get(idx)
+                                    if tool_state and partial:
+                                        tool_state["partial_json"] += partial
+                                        extracted = parse_partial_tool_input(
+                                            tool_state["partial_json"],
+                                            tool_state["name"],
+                                        )
+                                        yield ToolUseDeltaChunk(
+                                            tool_use_id=tool_state["id"],
+                                            tool=tool_state["name"],
+                                            partial_json=partial,
+                                            extracted=extracted,
+                                            index=idx,
+                                        )
+                                elif dtype == "thinking_delta":
+                                    chunk = delta.get("thinking") or ""
+                                    if chunk:
+                                        thinking_streamed_in_turn = True
+                                        yield ThinkingDeltaChunk(text=chunk)
+
+                            elif etype == "content_block_stop":
+                                idx = event.get("index")
+                                tool_state = active_tool_blocks.pop(idx, None)
+                                if tool_state:
+                                    yield ToolUseCompleteChunk(
+                                        tool_use_id=tool_state["id"],
+                                        tool=tool_state["name"],
+                                    )
+                            continue
+
                         if isinstance(message, SystemMessage):
+                            subtype = getattr(message, "subtype", None)
                             await self.events.emit_event(Event(
                                 type="system_message",
                                 run_id=run_id,
-                                payload={"subtype": getattr(message, "subtype", None)},
+                                payload={"subtype": subtype},
                             ))
+                            if subtype == "init":
+                                data = getattr(message, "data", None) or {}
+                                yield InitChunk(
+                                    session_id=(
+                                        data.get("session_id")
+                                        if isinstance(data, dict) else None
+                                    ),
+                                )
 
                         elif isinstance(message, AssistantMessage):
                             for block in message.content:
@@ -251,6 +388,10 @@ class Motor:
                                             "preview": block.text[:200],
                                         },
                                     ))
+                                    # Fallback: only yield the full block if we
+                                    # didn't already stream its content as deltas.
+                                    if not text_streamed_in_turn:
+                                        yield TextBlockChunk(text=block.text)
                                 elif isinstance(block, ThinkingBlock):
                                     collected.append({"type": "thinking", "text": block.thinking})
                                     await self.events.emit_event(Event(
@@ -258,6 +399,8 @@ class Motor:
                                         run_id=run_id,
                                         payload={"len": len(block.thinking)},
                                     ))
+                                    if not thinking_streamed_in_turn:
+                                        yield ThinkingBlockChunk(text=block.thinking)
                                 elif isinstance(block, ToolUseBlock):
                                     n_tool_calls += 1
                                     collected.append({
@@ -274,19 +417,35 @@ class Motor:
                                             if isinstance(block.input, dict) else None,
                                         },
                                     ))
+                                    block_id = getattr(block, "id", None) or ""
+                                    yield ToolUseFinalizedChunk(
+                                        tool_use_id=block_id,
+                                        tool=block.name,
+                                        input=(
+                                            block.input
+                                            if isinstance(block.input, dict)
+                                            else {"_raw": block.input}
+                                        ),
+                                    )
 
                         elif isinstance(message, UserMessage):
                             for block in message.content:
                                 if isinstance(block, ToolResultBlock):
                                     preview = _tool_result_preview(block)
+                                    block_is_error = bool(getattr(block, "is_error", False))
                                     await self.events.emit_event(Event(
                                         type="tool_result",
                                         run_id=run_id,
                                         payload={
-                                            "is_error": getattr(block, "is_error", False),
+                                            "is_error": block_is_error,
                                             "preview": preview,
                                         },
                                     ))
+                                    yield ToolResultChunk(
+                                        tool_use_id=getattr(block, "tool_use_id", "") or "",
+                                        is_error=block_is_error,
+                                        preview=preview,
+                                    )
 
                         elif isinstance(message, ResultMessage):
                             result_text = message.result
@@ -342,6 +501,7 @@ class Motor:
                 is_error = True
                 error_reason = repr(e)
                 await self.events.log("ERROR", f"run failed: {e!r}", run_id=run_id)
+                yield ErrorChunk(message=repr(e))
             finally:
                 if self._proxy is not None:
                     self._proxy.clear_active_run()
@@ -369,14 +529,16 @@ class Motor:
                 run_id=run_id,
             )
 
-            return RunResult(
-                run_id=run_id,
-                output_text=result_text,
-                blocks=collected,
-                metadata=metadata,
-                audit_dir=audit_dir,
-                workspace_dir=workspace_dir,
-                output_data=output_data,
+            yield DoneChunk(
+                result=RunResult(
+                    run_id=run_id,
+                    output_text=result_text,
+                    blocks=collected,
+                    metadata=metadata,
+                    audit_dir=audit_dir,
+                    workspace_dir=workspace_dir,
+                    output_data=output_data,
+                ),
             )
 
     # ── helpers ──────────────────────────────────────────────────────
@@ -623,6 +785,11 @@ class Motor:
             "env": env,
             "plugins": [],
             "setting_sources": ["project"],
+            # Stream raw API deltas (text_delta, input_json_delta, thinking_delta)
+            # alongside the regular AssistantMessage/UserMessage envelope. Required
+            # for `motor.stream(task)` to emit live token chunks; harmless overhead
+            # for `motor.run(task)` which collects.
+            "include_partial_messages": True,
         }
         if task.tools is not None:
             sdk_kwargs["tools"] = task.tools
