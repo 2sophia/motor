@@ -29,6 +29,8 @@ one your code can actually trust.
 </div>
 
 ```python
+motor = Motor()  # default loads from => env ANTHROPIC_API_KEY=sk-ant-...
+
 result = await motor.run(RunTask(
     prompt="Should we approve this loan request? Reasons attached.",
     output_schema=Decision,  # ← your Pydantic class
