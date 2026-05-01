@@ -113,17 +113,17 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 Pass any of these in `RunTask(tools=[...])`. The agent **only** sees what you list — `tools=[]` (the default) means pure
 reasoning, no actions.
 
-| Tool        | What it does                                                |
-|-------------|-------------------------------------------------------------|
-| `Read`      | Read a file under the run cwd                               |
-| `Edit`      | Modify a file under the run cwd                             |
-| `Write`     | Create files (guardrail confines to `outputs/`)             |
-| `Glob`      | Pattern-match filenames                                     |
-| `Grep`      | Pattern-match file content                                  |
-| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) |
-| `Skill`     | Invoke a `SKILL.md` skill linked into the run               |
-| `WebSearch` | Live internet search                                        |
-| `WebFetch`  | Fetch a URL to text/markdown                                |
+| Tool        | What it does                                                | Status      |
+|-------------|-------------------------------------------------------------|-------------|
+| `Read`      | Read a file under the run cwd                               | ✅ available |
+| `Edit`      | Modify a file under the run cwd                             | ✅ available |
+| `Write`     | Create files (guardrail confines to `outputs/`)             | ✅ available |
+| `Glob`      | Pattern-match filenames                                     | ✅ available |
+| `Grep`      | Pattern-match file content                                  | ✅ available |
+| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) | ✅ available |
+| `Skill`     | Invoke a `SKILL.md` skill linked into the run               | ✅ available |
+| `WebSearch` | Live internet search                                        | ✅ available |
+| `WebFetch`  | Fetch a URL to text/markdown                                | ✅ available |
 
 `WebSearch` and `WebFetch` reach the live internet — the agent can follow links anywhere on the public web. Most runs
 don't need it; opt in when the task genuinely needs fresh information. See
