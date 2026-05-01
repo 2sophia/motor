@@ -941,6 +941,13 @@ class Motor:
             # session.jsonl, .claude.json, backups under a cwd-derived
             # fallback path and triggers telemetry + title/onboarding.
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            # File checkpointing is the CLI's `/rewind` undo feature for
+            # interactive sessions — tracks code edits so the user can
+            # revert. Irrelevant to programmatic motor runs (we never
+            # rewind), and unrelated to session.jsonl conversation
+            # persistence (controlled by --no-session-persistence).
+            # Always disabled.
+            "CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING": "1",
             "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
             "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
             "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
@@ -953,13 +960,6 @@ class Motor:
             "DISABLE_AUTO_COMPACT": "1",
             "DISABLE_BUG_COMMAND": "1",
         }
-        # File checkpointing controls whether the CLI persists
-        # session.jsonl on disk. We DISABLE it for standalone runs
-        # (transient, no follow-up) but LEAVE IT ENABLED for chat
-        # runs, where the next turn needs to resume from the file.
-        if task.workspace_dir is None:
-            env["CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING"] = "1"
-
         if self.config.disable_claude_md:
             # Native env-var alternative to tengu_paper_halyard in
             # .config.json — both work, env is just less ceremonial.
