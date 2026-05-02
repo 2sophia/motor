@@ -20,6 +20,7 @@ points the SDK subprocess at it via `ANTHROPIC_BASE_URL` env var.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import re
 import socket
@@ -83,15 +84,20 @@ class ProxyServer:
     async def start(self) -> str:
         """Bind to a port and start serving. Returns the base URL.
 
-        If `config.proxy_port` is set, binds to that explicit port (raises if
-        already in use). Otherwise asks the kernel for a free port — safe for
-        parallel Motor instances.
+        Default (`proxy_port=None`): asks the kernel for a free port and
+        keeps the socket open until uvicorn takes it over — no release-
+        and-rebind race. Explicit `proxy_port` raises a clear error if
+        the port is already in use, instead of leaking a uvicorn stack.
         """
-        self.port = self.config.proxy_port or _find_free_port()
+        sock = _bind_socket(self.config.proxy_host, self.config.proxy_port or 0)
+        self.port = sock.getsockname()[1]
+        fd = sock.fileno()
+        # Hand the socket fd to uvicorn. detach() releases ownership from
+        # the Python wrapper so uvicorn — and only uvicorn — closes it.
+        sock.detach()
         ucfg = uvicorn.Config(
             self.app,
-            host=self.config.proxy_host,
-            port=self.port,
+            fd=fd,
             log_level="warning",
             access_log=False,
             lifespan="on",
@@ -344,11 +350,29 @@ class ProxyServer:
 # helpers
 # ─────────────────────────────────────────────────────────────────────────
 
-def _find_free_port() -> int:
-    """Bind to port 0, read the kernel-assigned port, release."""
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
+def _bind_socket(host: str, port: int) -> socket.socket:
+    """Open + bind + listen on `(host, port)`. Caller owns the fd.
+
+    `port=0` lets the kernel assign a free port. Explicit non-zero
+    ports get a friendly RuntimeError on EADDRINUSE so the caller
+    learns to pass `proxy_port=None` instead of reading uvicorn's
+    traceback.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind((host, port))
+    except OSError as e:
+        s.close()
+        if e.errno == errno.EADDRINUSE and port != 0:
+            raise RuntimeError(
+                f"sophia-motor proxy: port {port} on {host} is already "
+                f"in use. Pass proxy_port=None to let the kernel pick "
+                f"a free port, or pick a different value."
+            ) from e
+        raise
+    s.listen(128)
+    return s
 
 
 def _strip_sdk_noise(body: dict) -> int:

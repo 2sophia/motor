@@ -405,6 +405,30 @@ await motor.run(RunTask(
 
 ---
 
+## Networking
+
+The proxy listens on **127.0.0.1 with a kernel-assigned port** by default
+— no exposure to the host network, no clash with services on common
+ports (ollama `:11434`, vLLM, Postgres, dev servers). Inside a Docker
+container the loopback is the *container's* loopback, not the host's,
+so multiple motors on the same machine — or alongside any other local
+service — never collide. Two `Motor()` instances in the same Python
+process get distinct ports automatically.
+
+```python
+# Default — kernel picks a free port. Recommended.
+Motor()
+
+# Pin a specific port — only when you need a stable proxy URL for
+# external sniffing or fixed firewall rules. Raises a clear error if
+# the port is already in use.
+Motor(MotorConfig(proxy_port=8765))
+```
+
+The proxy is an internal mechanism: nothing calls it from outside the
+process. You never need to open a port, configure a Service, or punch
+through a firewall.
+
 ## Concurrency
 
 One motor, N runs in parallel. The proxy multiplexes runs via per-run path prefixes — call `motor.run(...)` /
