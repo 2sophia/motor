@@ -87,6 +87,14 @@ def _resolve_audit_dump() -> bool:
     return False if v is None else v
 
 
+def _resolve_upstream_base_url() -> str:
+    return _env_str("SOPHIA_MOTOR_BASE_URL") or "https://api.anthropic.com"
+
+
+def _resolve_upstream_adapter() -> str:
+    return _env_str("SOPHIA_MOTOR_ADAPTER") or "anthropic"
+
+
 # Tool description overrides applied at proxy layer.
 # The default Claude CLI ships with verbose, dev-oriented descriptions for the
 # core tools that don't fit a sandboxed agent run: Read says "use absolute
@@ -171,17 +179,23 @@ class MotorConfig(BaseModel):
         ),
     )
     upstream_base_url: str = Field(
-        default="https://api.anthropic.com",
-        description="Upstream endpoint the proxy forwards to. Defaults to Anthropic.",
+        default_factory=_resolve_upstream_base_url,
+        description=(
+            "Upstream endpoint the proxy forwards to. Resolution cascade: "
+            "explicit param > SOPHIA_MOTOR_BASE_URL env var > "
+            "'https://api.anthropic.com'."
+        ),
     )
     upstream_adapter: Any = Field(
-        default="anthropic",
+        default_factory=_resolve_upstream_adapter,
         description=(
             "Provider adapter that customizes the proxy → upstream hop. "
             "Pass a string preset (`'anthropic'` default, `'vllm'`) or an "
             "`UpstreamAdapter` instance for full control (custom auth, "
             "body re-mapping, SSE cleanup, …). Subclass `UpstreamAdapter` "
-            "to support other providers without forking the proxy."
+            "to support other providers without forking the proxy. "
+            "Resolution cascade: explicit param > SOPHIA_MOTOR_ADAPTER env "
+            "var > 'anthropic'."
         ),
     )
     anthropic_version: str = Field(

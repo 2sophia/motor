@@ -20,6 +20,8 @@ _ENV_KEYS = (
     "SOPHIA_MOTOR_PROXY_HOST",
     "SOPHIA_MOTOR_CONSOLE_LOG",
     "SOPHIA_MOTOR_AUDIT_DUMP",
+    "SOPHIA_MOTOR_BASE_URL",
+    "SOPHIA_MOTOR_ADAPTER",
 )
 
 
@@ -39,6 +41,8 @@ def test_defaults_when_no_env_no_dotenv(clean_env) -> None:
     assert c.workspace_root == (Path.home() / ".sophia-motor" / "runs").resolve()
     assert c.console_log_enabled is False
     assert c.proxy_dump_payloads is False
+    assert c.upstream_base_url == "https://api.anthropic.com"
+    assert c.upstream_adapter == "anthropic"
 
 
 def test_env_overrides_defaults(clean_env, monkeypatch) -> None:
@@ -114,3 +118,36 @@ def test_process_env_beats_dotenv_file(clean_env, monkeypatch) -> None:
     monkeypatch.setenv("SOPHIA_MOTOR_MODEL", "from-process-env")
     c = MotorConfig(api_key="x")
     assert c.model == "from-process-env"
+
+
+def test_upstream_env_overrides_defaults(clean_env, monkeypatch) -> None:
+    """SOPHIA_MOTOR_BASE_URL + SOPHIA_MOTOR_ADAPTER swap upstream from env alone."""
+    monkeypatch.setenv("SOPHIA_MOTOR_BASE_URL", "http://localhost:8001")
+    monkeypatch.setenv("SOPHIA_MOTOR_ADAPTER", "vllm")
+
+    c = MotorConfig(api_key="x")
+    assert c.upstream_base_url == "http://localhost:8001"
+    assert c.upstream_adapter == "vllm"
+
+
+def test_upstream_explicit_param_beats_env(clean_env, monkeypatch) -> None:
+    monkeypatch.setenv("SOPHIA_MOTOR_BASE_URL", "http://localhost:8001")
+    monkeypatch.setenv("SOPHIA_MOTOR_ADAPTER", "vllm")
+
+    c = MotorConfig(
+        api_key="x",
+        upstream_base_url="https://api.anthropic.com",
+        upstream_adapter="anthropic",
+    )
+    assert c.upstream_base_url == "https://api.anthropic.com"
+    assert c.upstream_adapter == "anthropic"
+
+
+def test_upstream_dotenv_picked_up(clean_env) -> None:
+    (clean_env / ".env").write_text(
+        "SOPHIA_MOTOR_BASE_URL=http://vllm.internal:8001\n"
+        "SOPHIA_MOTOR_ADAPTER=vllm\n"
+    )
+    c = MotorConfig(api_key="x")
+    assert c.upstream_base_url == "http://vllm.internal:8001"
+    assert c.upstream_adapter == "vllm"

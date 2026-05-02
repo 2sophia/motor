@@ -13,14 +13,16 @@ order is:
 
 > **explicit `MotorConfig(...)` param  >  process env var  >  `./.env` file in cwd  >  hardcoded default**
 
-| Env var                       | Field                  | Default                  |
-|-------------------------------|------------------------|--------------------------|
-| `ANTHROPIC_API_KEY`           | `api_key`              | (required)               |
-| `SOPHIA_MOTOR_MODEL`          | `model`                | `claude-opus-4-6`        |
-| `SOPHIA_MOTOR_WORKSPACE_ROOT` | `workspace_root`       | `~/.sophia-motor/runs`   |
-| `SOPHIA_MOTOR_PROXY_HOST`     | `proxy_host`           | `127.0.0.1`              |
-| `SOPHIA_MOTOR_CONSOLE_LOG`    | `console_log_enabled`  | `false`                  |
-| `SOPHIA_MOTOR_AUDIT_DUMP`     | `proxy_dump_payloads`  | `false`                  |
+| Env var                       | Field                  | Default                    |
+|-------------------------------|------------------------|----------------------------|
+| `ANTHROPIC_API_KEY`           | `api_key`              | (required)                 |
+| `SOPHIA_MOTOR_MODEL`          | `model`                | `claude-opus-4-6`          |
+| `SOPHIA_MOTOR_BASE_URL`       | `upstream_base_url`    | `https://api.anthropic.com`|
+| `SOPHIA_MOTOR_ADAPTER`        | `upstream_adapter`     | `anthropic`                |
+| `SOPHIA_MOTOR_WORKSPACE_ROOT` | `workspace_root`       | `~/.sophia-motor/runs`     |
+| `SOPHIA_MOTOR_PROXY_HOST`     | `proxy_host`           | `127.0.0.1`                |
+| `SOPHIA_MOTOR_CONSOLE_LOG`    | `console_log_enabled`  | `false`                    |
+| `SOPHIA_MOTOR_AUDIT_DUMP`     | `proxy_dump_payloads`  | `false`                    |
 
 Bool env vars accept `true`/`1`/`yes`/`on` (truthy) and
 `false`/`0`/`no`/`off` (falsy), case-insensitive. Anything else falls
