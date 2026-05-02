@@ -141,8 +141,10 @@ reasoning, no actions.
 don't need it; opt in when the task genuinely needs fresh information. See
 [`examples/web-search/`](examples/web-search/).
 
-Beyond this list the SDK ships a few more experimental tools (`Agent`, `TodoWrite`, plan-mode, notebook-edit, cron, …)
-— they may work if you list them, but aren't validated end-to-end with the motor yet.
+`Agent` is the entry point for [subagents](#subagents) — opt-in (the
+default `disallowed_tools` blocks it). The SDK also ships a few more
+experimental tools (`TodoWrite`, plan-mode, notebook-edit, cron, ...)
+that the motor blocks by default; they're not validated end-to-end.
 
 ---
 
@@ -407,7 +409,11 @@ await motor.run(RunTask(
 
 ## Subagents
 
-Spawn isolated specialist agents from the main run. Three patterns:
+Spawn isolated specialist agents from the main run.
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/subagents.svg" alt="Singleton motor → main agent → fan-out to N isolated subagents (parallel, sandboxed, summary-only return)" width="100%"/>
+</div>
 
 ```python
 from sophia_motor import Motor, MotorConfig, RunTask, AgentDefinition
@@ -492,30 +498,6 @@ Subagents inherit a subset of the parent's tools (with `Agent`
 removed automatically — no nested spawning), so a subagent can never
 reach a tool the parent doesn't have.
 
-## Networking
-
-The proxy listens on **127.0.0.1 with a kernel-assigned port** by default
-— no exposure to the host network, no clash with services on common
-ports (ollama `:11434`, vLLM, Postgres, dev servers). Inside a Docker
-container the loopback is the *container's* loopback, not the host's,
-so multiple motors on the same machine — or alongside any other local
-service — never collide. Two `Motor()` instances in the same Python
-process get distinct ports automatically.
-
-```python
-# Default — kernel picks a free port. Recommended.
-Motor()
-
-# Pin a specific port — only when you need a stable proxy URL for
-# external sniffing or fixed firewall rules. Raises a clear error if
-# the port is already in use.
-Motor(MotorConfig(proxy_port=8765))
-```
-
-The proxy is an internal mechanism: nothing calls it from outside the
-process. You never need to open a port, configure a Service, or punch
-through a firewall.
-
 ## Concurrency
 
 One motor, N runs in parallel. The proxy multiplexes runs via per-run path prefixes — call `motor.run(...)` /
@@ -533,6 +515,12 @@ results = await asyncio.gather(
 This is exactly what a chat backend does: instantiate one motor, hand it whatever `RunTask` each HTTP request brings,
 let the framework drive concurrency.
 
+The proxy listens on `127.0.0.1` with a kernel-assigned port —
+no host-network exposure, no clash with services on common ports
+(ollama, vLLM, Postgres). Two motors in the same process get distinct
+ports automatically. See [`docs/CONFIGURATION.md → Networking`](./docs/CONFIGURATION.md#networking)
+for pinning a fixed port or running inside Docker.
+
 ## Guardrail
 
 A `PreToolUse` hook is wired in by default. It runs **before** every tool call and refuses unsafe ones, returning the
@@ -544,7 +532,7 @@ reason as feedback so the agent can self-correct.
 > patterns and a strict-mode Python invocation parser. This is the **first line of defense**, not the only one — it
 > catches common LLM mistakes and naïve prompt injection by lexical match, not formal sandboxing. **For real production
 > use, layer OS-level isolation underneath** (container, non-privileged user, read-only filesystem, capability drop,
-> egress allowlist) — see [Production hardening](#production-hardening--the-guard-is-first-line-not-the-line) below.
+> egress allowlist) — see [`docs/SECURITY.md → Production hardening`](./docs/SECURITY.md#production-hardening).
 
 ```python
 Motor(MotorConfig(guardrail="strict"))  # default — safe by default
@@ -558,215 +546,14 @@ Motor(MotorConfig(guardrail="off"))  # no hook (you take responsibility)
 | **permissive** | unrestricted              | unrestricted    | only `sudo`, exfiltration patterns, `/dev/tcp`, `..` escapes, destructive commands                                       |
 | **off**        | unrestricted              | unrestricted    | unrestricted                                                                                                             |
 
-### What the motor controls (that the raw SDK doesn't)
+**Deep dive on what the guard catches, what it doesn't, and how to
+layer OS-level isolation on top:** [`docs/SECURITY.md`](./docs/SECURITY.md).
 
-The Claude Agent SDK ships a CLI that, by default, inherits the entire
-environment of your Python process and runs Bash freely. If you embed
-the raw SDK in a backend that has `MONGODB_URI`, `STRIPE_SECRET_KEY`,
-or `AWS_ACCESS_KEY_ID` in its env, **the model can read them** with a
-single `os.environ` print or `env` shell command. The motor closes the
-common gaps:
-
-| Layer | Raw SDK | sophia-motor |
-|---|---|---|
-| Subprocess env | full inherit (host secrets visible) | **only** `PATH`, `ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, model + `DISABLE_*` flags. Nothing else leaks |
-| Filesystem reads | unrestricted | `Read/Edit/Glob/Grep` fenced inside the run cwd (strict) |
-| Filesystem writes | unrestricted | `Write` restricted to `outputs/` (strict), with symlink-escape resolution |
-| Bash blocklist | none | dev/admin commands + `bash -c` + `..` + `/dev/tcp` + `eval`/`source`/`exec` redirects |
-| Exfiltration patterns | none | `curl`/`wget` with `--data`/`--upload-file` blocked in **both** strict and permissive |
-| Per-run isolation | shared cwd | each run gets its own workspace under `<workspace_root>/<run_id>/`, deleted by `motor.clean_runs()` |
-| Audit trail | none | every request/response body persisted under `<run>/audit/` (when `proxy_dump_payloads=True`) |
-
-### Python invocation guard (strict mode only)
-
-`python` and `python3` are allowed in strict mode but the call shape
-is constrained:
-
-| Form | Verdict |
-|---|---|
-| `python -c "<code>"` with stdlib-safe imports + no `os`/`subprocess`/`socket`/`shutil`/`exec`/`eval`/`__import__`/`open('/abs/path')` | ✅ allowed |
-| `python <path>` where `<path>` is under `$CLAUDE_CONFIG_DIR/skills/<name>/scripts/` (a skill the dev registered) | ✅ allowed |
-| `python -c "..."` with `import os`, `subprocess`, `shutil`, `socket`, `urllib`, `requests`, `__import__(...)`, `exec(...)`, `eval(...)`, `open('/abs/path')`, `open(0)`, `__builtins__`, `getattr(...)` | ❌ blocked |
-| `python outputs/foo.py`, `python attachments/foo.py`, `python /tmp/foo.py` | ❌ blocked (Write+exec workaround closed) |
-| `python` (REPL), `python -m <anything>`, `python -i ...`, `python -V`, `python < /dev/stdin`, `cat foo.py \| python` | ❌ blocked |
-
-Stdlib whitelist for `python -c` imports: `math`, `statistics`,
-`decimal`, `fractions`, `json`, `re`, `datetime`, `random`,
-`itertools`, `functools`, `collections`, `string`, `textwrap`,
-`unicodedata`, `base64`, `hashlib`, `uuid`, `time`, `operator`,
-`copy`, `enum`, `typing`. Anything else needs to live as a registered
-skill — that's the trust passport.
-
-Skill = capability bounded. The dev decides "my agent can query
-Qdrant" by writing a `query-qdrant` skill with its own
-`scripts/search.py`. The agent runs that script through the
-skill-script whitelist; it cannot import `qdrant_client` directly via
-`python -c`. **Strict stays strict** — no flag explosion needed.
-
-In permissive mode the python-c whitelist does **not** apply: the dev
-has signed off on trusted-tool tier and any `python` call is fine
-(other than the cross-mode escapes like `bash -c`, `eval`, `/dev/tcp`,
-`| python`, ...).
-
-### What the motor still does NOT control (be honest about this)
-
-- **Skill scripts are trusted code** (yours). The motor symlinks
-  whatever you put under `default_skills` into the run. If a skill's
-  `scripts/foo.py` does something destructive, the guard won't catch
-  it — the dev who registered the skill has signed off on it.
-- **The `Skill` tool itself is a code-execution surface** by design.
-  Strip it from `tools` if your trust boundary doesn't include
-  whoever wrote the skills.
-- **`guardrail="off"`** is opt-in escape hatch. Use only inside an
-  ephemeral container or a dedicated VM where blast radius is the
-  container itself.
-- **Determined evasion** via heavy obfuscation (custom encoding +
-  `compile()` chains, ctype tricks via skills, etc.) is still
-  possible. The guard defeats the common prompt-injection and
-  honest-mistake cases — it is not a formal sandbox.
-- **Other interpreters** beyond Python (`lua`, `tcl`, `julia`, `R`,
-  `php -r`, `awk 'BEGIN{system(...)}'`, `sed 'e ...'`, future runtimes)
-  are not all individually parsed. The blocklist catches the common
-  ones (`node`, `ruby`, `perl`, `pwsh`); rare/exotic interpreters can
-  slip through if you make them available in `PATH`. The guard is a
-  **lexical first filter**, not an exhaustive runtime registry.
-
-### Production hardening — the guard is **first line**, not the line
-
-The strict guard catches the common LLM mistake and the naïve prompt-
-injection. It is **not** a sandbox you can rely on alone. For anything
-that touches real users or real secrets, layer OS-level isolation
-underneath:
-
-```
-Container (Docker, k8s, Firecracker, ...)
-  └─ non-privileged user (UID ≥ 1000), no sudo, no setuid bits
-     └─ read-only filesystem, except /data (volume) and /tmp (tmpfs)
-        └─ no outbound network (or NetworkPolicy / iptables egress allowlist)
-           └─ dropped Linux capabilities (--cap-drop=ALL, then add only what's needed)
-              └─ resource limits (--memory, --cpus, --pids-limit)
-                 └─ then the motor with guardrail="strict"
-```
-
-Each layer covers a different threat:
-
-| Layer | What it stops | Without it... |
-|---|---|---|
-| Non-priv user | `sudo`, `chmod` on system files, mount, kill other processes | guard's `sudo` block isn't enough — root can still escape |
-| Read-only FS | `Write`/`shutil.rmtree` on system paths, planted persistent files | guard restricts `Write` to `outputs/` but a bug = host damage |
-| No outbound network | Exfiltration of secrets the env strip didn't catch | env strip is best-effort, network gate is binary |
-| Dropped capabilities | `mount`, `setuid`, raw socket | `CAP_NET_RAW` would let the agent skip our network gate |
-| Resource limits | Fork bombs, CPU/memory exhaustion DoS | the guard doesn't measure resource usage |
-
-For an `examples/docker/` starting point with most of these baked in,
-see [examples/docker/](./examples/docker/). For Kubernetes, the same
-shape with a `securityContext` (`runAsNonRoot`, `readOnlyRootFilesystem`,
-`capabilities.drop: [ALL]`) and a `NetworkPolicy` denying egress.
-
-The guard saves you from the easy 95%. The OS layer is what keeps the
-remaining 5% from blowing up. **Use both — you need both.**
+**Configuration reference** (`MotorConfig` / `RunTask` / `RunResult`
+tables, env cascade, networking, debug knobs):
+[`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md).
 
 ---
-
-## Debug mode
-
-The motor stays silent by default — no stdout, no audit dump, nothing
-written outside the per-run workspace. Production-shaped out of the
-box. When you want to **see** what's happening, flip on the two debug
-knobs.
-
-```bash
-# inline, single run
-SOPHIA_MOTOR_CONSOLE_LOG=true SOPHIA_MOTOR_AUDIT_DUMP=true python my_app.py
-```
-
-```python
-# or per Motor instance
-motor = Motor(MotorConfig(
-    console_log_enabled=True,
-    proxy_dump_payloads=True,
-))
-```
-
-`console_log_enabled` streams events as they happen — turn boundaries,
-tool calls, costs. `proxy_dump_payloads` persists every request and
-response body under `<run>/audit/` so you can grep what the model
-actually saw and produced.
-
-### Configuration cascade
-
-For every supported field, resolution order is:
-
-> **explicit `MotorConfig(...)` param  >  env var  >  hardcoded default**
-
-| Env var                       | Field                  | Default                  |
-|-------------------------------|------------------------|--------------------------|
-| `SOPHIA_MOTOR_MODEL`          | `model`                | `claude-opus-4-6`        |
-| `SOPHIA_MOTOR_WORKSPACE_ROOT` | `workspace_root`       | `~/.sophia-motor/runs`   |
-| `SOPHIA_MOTOR_PROXY_HOST`     | `proxy_host`           | `127.0.0.1`              |
-| `SOPHIA_MOTOR_CONSOLE_LOG`    | `console_log_enabled`  | `false`                  |
-| `SOPHIA_MOTOR_AUDIT_DUMP`     | `proxy_dump_payloads`  | `false`                  |
-
-Bool env vars accept `true`/`1`/`yes`/`on` (truthy) and
-`false`/`0`/`no`/`off` (falsy), case-insensitive. Anything else falls
-back to the hardcoded default — typo'd values never silently coerce.
-
-The cascade also reads `./.env` in the current working directory if a
-process env var isn't set, so a `pip install + Motor()` script can
-pick up local debug knobs without exporting anything.
-
----
-
-## Configuration reference
-
-### `MotorConfig`
-
-Settings on the motor instance — set once at construction.
-
-| Field                 | Type                                | Default                                 | What it does                                                                             |
-|-----------------------|-------------------------------------|-----------------------------------------|------------------------------------------------------------------------------------------|
-| `model`               | `str`                               | `"claude-opus-4-6"`                     | Default model the SDK uses                                                               |
-| `api_key`             | `str`                               | from `ANTHROPIC_API_KEY` env / `./.env` | Anthropic API key                                                                        |
-| `workspace_root`      | `Path`                              | `~/.sophia-motor/runs/`                 | Where per-run dirs are created. Must be outside any git repo / `pyproject.toml` ancestor |
-| `guardrail`           | `"strict" \| "permissive" \| "off"` | `"strict"`                              | Built-in PreToolUse hook (see *Guardrail* above)                                         |
-| `disable_claude_md`   | `bool`                              | `True`                                  | Skip auto-loading repo `CLAUDE.md` / `MEMORY.md` into the agent's context                |
-| `console_log_enabled` | `bool`                              | `False`                                 | Colored console logger for events. Off by default — flip on for local debug              |
-| `proxy_dump_payloads` | `bool`                              | `False`                                 | Persist every request/response under `<run>/audit/`. Off by default — flip on for debug  |
-
-`MotorConfig` also exposes a set of `default_*` fields (`default_system`, `default_tools`, `default_skills`,
-`default_output_schema`, ...) so the same task settings can be set once on the motor and varied per `RunTask`. See the [
-`MotorConfig` source](src/sophia_motor/config.py) if you need them.
-
-### `RunTask`
-
-Settings on the single call — passed to `motor.run(RunTask(...))`. Anything left unset falls back to the matching
-`MotorConfig.default_*`.
-
-| Field               | Type                    | What it does                                                                                                                                                                                                                                   |
-|---------------------|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `prompt`            | `str`                   | **Required.** The user-message instruction                                                                                                                                                                                                     |
-| `system`            | `str?`                  | System prompt for this task (overrides `default_system`)                                                                                                                                                                                       |
-| `tools`             | `list[str]?`            | Hard whitelist of tools the model can SEE. `[]` = no tools, `None` = fall back to `MotorConfig.default_tools` (which itself defaults to `[]` — principle of least privilege)                                                                   |
-| `allowed_tools`     | `list[str]?`            | Permission skip — rarely needed: the motor runs with `permission_mode="bypassPermissions"` so every tool already auto-runs. Leave `None`.                                                                                                      |
-| `disallowed_tools`  | `list[str]?`            | Tools hard-blocked from the model's context                                                                                                                                                                                                    |
-| `max_turns`         | `int?`                  | Per-task turn cap (overrides default)                                                                                                                                                                                                          |
-| `attachments`       | `Path \| dict \| list?` | Inputs the agent can read. File `Path` → hard-linked (zero-copy, glob-visible), directory `Path` → mirrored as real dirs with file-level hard-links, `dict[str,str]` → inline file. Symlink fallback on cross-filesystem. Mixed list supported |
-| `skills`            | `Path \| str \| list?`  | Skill source folder(s). Each subdir with `SKILL.md` is linked into the run                                                                                                                                                                     |
-| `disallowed_skills` | `list[str]`             | Skill names to skip even if found in source                                                                                                                                                                                                    |
-| `output_schema`     | `type[BaseModel]?`      | Pydantic class — agent commits to this shape, returned in `RunResult.output_data`                                                                                                                                                              |
-
-### `RunResult`
-
-What `motor.run(...)` returns.
-
-| Field           | Type          | What it is                                                                                    |
-|-----------------|---------------|-----------------------------------------------------------------------------------------------|
-| `run_id`        | `str`         | `run-<unix>-<8hex>`                                                                           |
-| `output_text`   | `str?`        | Final assistant text (free-form)                                                              |
-| `output_data`   | `BaseModel?`  | Schema-validated payload, present iff `output_schema` was set                                 |
-| `metadata`      | `RunMetadata` | `n_turns`, `n_tool_calls`, tokens, `total_cost_usd`, `duration_s`, `is_error`, `error_reason` |
-| `audit_dir`     | `Path`        | `<run>/audit/` (request_*.json + response_*.sse)                                              |
-| `workspace_dir` | `Path`        | The full run dir                                                                              |
 
 ## Development
 

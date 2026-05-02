@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 460" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+
+  <defs>
+    <linearGradient id="motorGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <radialGradient id="motorGlow2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#8b5cf6" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.04"/>
+    </radialGradient>
+    <filter id="softShadow2" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowReturn" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0891b2"/>
+    </marker>
+  </defs>
+
+  <!-- ============================================================ -->
+  <!-- MOTOR (small, top-left)                                       -->
+  <!-- ============================================================ -->
+  <g transform="translate(30, 30)">
+    <ellipse cx="80" cy="60" rx="100" ry="80" fill="url(#motorGlow2)"/>
+    <rect x="0" y="0" width="160" height="120" rx="14"
+          fill="url(#motorGrad2)" filter="url(#softShadow2)"/>
+    <text x="80" y="28" font-size="12" font-weight="700"
+          fill="#ffffff" text-anchor="middle" letter-spacing="1.5">MOTOR</text>
+    <text x="80" y="44" font-size="9" fill="#ffffff" fill-opacity="0.85"
+          text-anchor="middle" letter-spacing="1">single instance</text>
+
+    <rect x="14" y="58" width="132" height="54" rx="8"
+          fill="#ffffff" fill-opacity="0.92"/>
+    <text x="26" y="78" font-size="10" fill="#475569">• proxy + audit</text>
+    <text x="26" y="94" font-size="10" fill="#475569">• default_agents={...}</text>
+    <text x="26" y="108" font-size="9" fill="#0891b2" font-weight="600" letter-spacing="0.8">EXPLICIT OPT-IN</text>
+  </g>
+
+  <!-- arrow motor → main -->
+  <path d="M 195 90 L 285 195" stroke="#94a3b8" stroke-width="1.5"
+        fill="none" marker-end="url(#arrow)"/>
+  <text x="240" y="135" font-size="9" fill="#64748b" letter-spacing="0.5">motor.run(task)</text>
+
+  <!-- ============================================================ -->
+  <!-- MAIN AGENT (center)                                            -->
+  <!-- ============================================================ -->
+  <g transform="translate(290, 170)" filter="url(#softShadow2)">
+    <rect x="0" y="0" width="220" height="120" rx="14"
+          fill="#ffffff" stroke="#0891b2" stroke-width="2"/>
+    <text x="110" y="30" font-size="13" font-weight="700"
+          fill="#0f172a" text-anchor="middle">MAIN AGENT</text>
+    <text x="110" y="48" font-size="10" fill="#64748b" text-anchor="middle">tools=[Read, Grep, Agent]</text>
+
+    <rect x="14" y="60" width="192" height="46" rx="8"
+          fill="#f8fafc"/>
+    <text x="110" y="80" font-size="10" fill="#475569" text-anchor="middle">picks specialist via</text>
+    <text x="110" y="96" font-size="10" font-weight="600" fill="#0891b2"
+          text-anchor="middle">AgentDefinition.description</text>
+  </g>
+
+  <!-- spawn arrows: main → 3 subagents (dashed = context boundary) -->
+  <path d="M 510 195 Q 590 115, 670 70" stroke="#8b5cf6" stroke-width="1.5"
+        fill="none" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <path d="M 510 230 Q 600 235, 670 230" stroke="#8b5cf6" stroke-width="1.5"
+        fill="none" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <path d="M 510 270 Q 590 350, 670 390" stroke="#8b5cf6" stroke-width="1.5"
+        fill="none" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+  <!-- summary return arrows -->
+  <path d="M 670 95 Q 600 145, 510 215" stroke="#0891b2" stroke-width="1"
+        fill="none" stroke-dasharray="2,2" opacity="0.6" marker-end="url(#arrowReturn)"/>
+  <path d="M 670 255 Q 605 250, 510 245" stroke="#0891b2" stroke-width="1"
+        fill="none" stroke-dasharray="2,2" opacity="0.6" marker-end="url(#arrowReturn)"/>
+  <path d="M 670 365 Q 600 320, 510 280" stroke="#0891b2" stroke-width="1"
+        fill="none" stroke-dasharray="2,2" opacity="0.6" marker-end="url(#arrowReturn)"/>
+
+  <text x="565" y="148" font-size="9" fill="#8b5cf6" font-weight="600">spawn</text>
+  <text x="555" y="190" font-size="8" fill="#0891b2" opacity="0.8" font-style="italic">summary only</text>
+
+  <!-- ============================================================ -->
+  <!-- 3 SUBAGENTS (right column, isolated bubbles)                  -->
+  <!-- ============================================================ -->
+
+  <!-- subagent 1: code-reviewer -->
+  <g transform="translate(670, 30)">
+    <rect x="-6" y="-6" width="190" height="92" rx="14"
+          fill="none" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+    <rect x="0" y="0" width="178" height="80" rx="10"
+          fill="#ffffff" stroke="#cbd5e1" stroke-width="1" filter="url(#softShadow2)"/>
+    <text x="14" y="22" font-size="11" font-weight="700" fill="#0f172a">code-reviewer</text>
+    <text x="14" y="38" font-size="9" fill="#64748b">tools=[Read, Grep]</text>
+    <text x="14" y="54" font-size="9" fill="#94a3b8">model=sonnet</text>
+    <text x="14" y="70" font-size="8" fill="#8b5cf6" font-weight="600" letter-spacing="0.5">ISOLATED CONTEXT</text>
+  </g>
+
+  <!-- subagent 2: doc-checker -->
+  <g transform="translate(670, 190)">
+    <rect x="-6" y="-6" width="190" height="92" rx="14"
+          fill="none" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+    <rect x="0" y="0" width="178" height="80" rx="10"
+          fill="#ffffff" stroke="#cbd5e1" stroke-width="1" filter="url(#softShadow2)"/>
+    <text x="14" y="22" font-size="11" font-weight="700" fill="#0f172a">doc-checker</text>
+    <text x="14" y="38" font-size="9" fill="#64748b">tools=[Read]</text>
+    <text x="14" y="54" font-size="9" fill="#94a3b8">model=haiku</text>
+    <text x="14" y="70" font-size="8" fill="#8b5cf6" font-weight="600" letter-spacing="0.5">ISOLATED CONTEXT</text>
+  </g>
+
+  <!-- subagent 3: security-scan -->
+  <g transform="translate(670, 350)">
+    <rect x="-6" y="-6" width="190" height="92" rx="14"
+          fill="none" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+    <rect x="0" y="0" width="178" height="80" rx="10"
+          fill="#ffffff" stroke="#cbd5e1" stroke-width="1" filter="url(#softShadow2)"/>
+    <text x="14" y="22" font-size="11" font-weight="700" fill="#0f172a">security-scan</text>
+    <text x="14" y="38" font-size="9" fill="#64748b">tools=[Read, Grep]</text>
+    <text x="14" y="54" font-size="9" fill="#94a3b8">model=opus</text>
+    <text x="14" y="70" font-size="8" fill="#8b5cf6" font-weight="600" letter-spacing="0.5">ISOLATED CONTEXT</text>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- Bottom labels                                                  -->
+  <!-- ============================================================ -->
+  <text x="110" y="170" font-size="10" font-weight="600" fill="#64748b"
+        text-anchor="middle" letter-spacing="2">SHARED ROOT</text>
+  <text x="400" y="310" font-size="10" font-weight="600" fill="#64748b"
+        text-anchor="middle" letter-spacing="2">ROUTES BY DESCRIPTION</text>
+  <text x="765" y="450" font-size="10" font-weight="600" fill="#8b5cf6"
+        text-anchor="middle" letter-spacing="2">N SUBAGENTS · PARALLEL · SANDBOXED</text>
+
+</svg>

@@ -1,0 +1,156 @@
+# Configuration reference
+
+Full surface of `MotorConfig`, `RunTask`, `RunResult`, plus the env
+cascade, networking knobs, and debug knobs. The README shows the
+quickstart shape; this doc is the consultable reference.
+
+---
+
+## Resolution cascade
+
+For every supported field with a `SOPHIA_MOTOR_*` env var, resolution
+order is:
+
+> **explicit `MotorConfig(...)` param  >  process env var  >  `./.env` file in cwd  >  hardcoded default**
+
+| Env var                       | Field                  | Default                  |
+|-------------------------------|------------------------|--------------------------|
+| `ANTHROPIC_API_KEY`           | `api_key`              | (required)               |
+| `SOPHIA_MOTOR_MODEL`          | `model`                | `claude-opus-4-6`        |
+| `SOPHIA_MOTOR_WORKSPACE_ROOT` | `workspace_root`       | `~/.sophia-motor/runs`   |
+| `SOPHIA_MOTOR_PROXY_HOST`     | `proxy_host`           | `127.0.0.1`              |
+| `SOPHIA_MOTOR_CONSOLE_LOG`    | `console_log_enabled`  | `false`                  |
+| `SOPHIA_MOTOR_AUDIT_DUMP`     | `proxy_dump_payloads`  | `false`                  |
+
+Bool env vars accept `true`/`1`/`yes`/`on` (truthy) and
+`false`/`0`/`no`/`off` (falsy), case-insensitive. Anything else falls
+back to the hardcoded default — typo'd values never silently coerce.
+
+---
+
+## Networking
+
+The proxy listens on **127.0.0.1 with a kernel-assigned port** by default
+— no exposure to the host network, no clash with services on common
+ports (ollama `:11434`, vLLM, Postgres, dev servers). Inside a Docker
+container the loopback is the *container's* loopback, not the host's,
+so multiple motors on the same machine — or alongside any other local
+service — never collide. Two `Motor()` instances in the same Python
+process get distinct ports automatically.
+
+```python
+# Default — kernel picks a free port. Recommended.
+Motor()
+
+# Pin a specific port — only when you need a stable proxy URL for
+# external sniffing or fixed firewall rules. Raises a clear error if
+# the port is already in use.
+Motor(MotorConfig(proxy_port=8765))
+```
+
+The proxy is an internal mechanism: nothing calls it from outside the
+process. You never need to open a port, configure a Service, or punch
+through a firewall.
+
+---
+
+## Debug mode
+
+The motor stays silent by default — no stdout, no audit dump, nothing
+written outside the per-run workspace. Production-shaped out of the
+box. When you want to **see** what's happening, flip on the two debug
+knobs.
+
+```bash
+# inline, single run
+SOPHIA_MOTOR_CONSOLE_LOG=true SOPHIA_MOTOR_AUDIT_DUMP=true python my_app.py
+```
+
+```python
+# or per Motor instance
+motor = Motor(MotorConfig(
+    console_log_enabled=True,
+    proxy_dump_payloads=True,
+))
+```
+
+`console_log_enabled` streams events as they happen — turn boundaries,
+tool calls, costs. `proxy_dump_payloads` persists every request and
+response body under `<run>/audit/` so you can grep what the model
+actually saw and produced.
+
+---
+
+## `MotorConfig`
+
+Settings on the motor instance — set once at construction.
+
+| Field                       | Type                                | Default                                 | What it does                                                                             |
+|-----------------------------|-------------------------------------|-----------------------------------------|------------------------------------------------------------------------------------------|
+| `api_key`                   | `str`                               | from `ANTHROPIC_API_KEY` env / `./.env` | Anthropic API key                                                                        |
+| `model`                     | `str`                               | `"claude-opus-4-6"`                     | Default model the SDK uses                                                               |
+| `upstream_base_url`         | `str`                               | `"https://api.anthropic.com"`           | Upstream endpoint the proxy forwards to                                                  |
+| `upstream_adapter`          | `str` or `UpstreamAdapter`          | `"anthropic"`                           | Provider preset (`"anthropic"`, `"vllm"`) or a custom adapter instance                   |
+| `workspace_root`            | `Path`                              | `~/.sophia-motor/runs/`                 | Where per-run dirs are created. Must be outside any git repo / `pyproject.toml` ancestor |
+| `proxy_enabled`             | `bool`                              | `True`                                  | Disable only for unit tests that mock the SDK                                            |
+| `proxy_host`                | `str`                               | `"127.0.0.1"`                           | Bind host for the local proxy                                                            |
+| `proxy_port`                | `int \| None`                       | `None`                                  | `None` → kernel picks free port; explicit int pins it (raises `RuntimeError` if busy)    |
+| `proxy_dump_payloads`       | `bool`                              | `False`                                 | Persist every request/response under `<run>/audit/`                                      |
+| `proxy_strip_sdk_noise`     | `bool`                              | `True`                                  | Strip SDK billing-header + identity blocks from system field                             |
+| `proxy_strip_user_system_reminders` | `bool`                      | `True`                                  | Strip `<system-reminder>` injected by the CLI from turn ≥2 user messages                 |
+| `tool_description_overrides`| `dict[str, str]`                    | `{Read: ...}`                           | Replace tool descriptions before forwarding upstream (Read defaults to a path-policy version) |
+| `guardrail`                 | `"strict" \| "permissive" \| "off"` | `"strict"`                              | Built-in PreToolUse hook (see [SECURITY.md](./SECURITY.md))                              |
+| `disable_claude_md`         | `bool`                              | `True`                                  | Skip auto-loading repo `CLAUDE.md` / `MEMORY.md` into the agent's context                |
+| `console_log_enabled`       | `bool`                              | `False`                                 | Colored console logger for events                                                        |
+| `cli_bare_mode`             | `bool`                              | `False`                                 | Pass `--bare` to the CLI subprocess (advanced; breaks the Skill tool — see source)       |
+| `cli_no_session_persistence`| `bool`                              | `True`                                  | Pass `--no-session-persistence` (no `session.jsonl` written by the CLI)                  |
+| `default_system`            | `str?`                              | `None`                                  | Default system prompt applied when `RunTask.system` is `None`                            |
+| `default_tools`             | `list[str]?`                        | `[]`                                    | Default hard tool whitelist; `None` = SDK's `claude_code` preset (every built-in)         |
+| `default_allowed_tools`     | `list[str]?`                        | `None`                                  | Default permission-skip list                                                             |
+| `default_disallowed_tools`  | `list[str]`                         | `DEFAULT_DISALLOWED_TOOLS` (17 entries) | Tools blocked by default: web access, `Agent`, plan-mode, cron, MCP auth flows, ...      |
+| `default_skills`            | `Path \| str \| list?`              | `None`                                  | Default skill source(s)                                                                  |
+| `default_attachments`       | `Path \| dict \| list?`             | `None`                                  | Default attachments                                                                      |
+| `default_disallowed_skills` | `list[str]`                         | `[]`                                    | Skills blocked by default                                                                |
+| `default_max_turns`         | `int`                               | `20`                                    | Default per-task turn cap                                                                |
+| `default_timeout_seconds`   | `int`                               | `300`                                   | Default per-task timeout                                                                 |
+| `default_output_schema`     | `type[BaseModel]?`                  | `None`                                  | Default Pydantic class for structured output                                             |
+| `default_agents`            | `dict[str, AgentDefinition]`        | `{}`                                    | Default subagents (forwarded to `ClaudeAgentOptions.agents`); requires `"Agent"` in `tools` to actually take effect |
+
+---
+
+## `RunTask`
+
+Settings on the single call — passed to `motor.run(RunTask(...))`. Anything left unset falls back to the matching `MotorConfig.default_*`.
+
+| Field               | Type                    | What it does                                                                                                                                                                                                                                   |
+|---------------------|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `prompt`            | `str`                   | **Required.** The user-message instruction                                                                                                                                                                                                     |
+| `system`            | `str?`                  | System prompt for this task (overrides `default_system`)                                                                                                                                                                                       |
+| `tools`             | `list[str]?`            | Hard whitelist of tools the model can SEE. `[]` = no tools, `None` = fall back to `MotorConfig.default_tools`                                                                                                                                  |
+| `allowed_tools`     | `list[str]?`            | Permission skip — rarely needed: the motor runs with `permission_mode="bypassPermissions"`                                                                                                                                                     |
+| `disallowed_tools`  | `list[str]?`            | Tools hard-blocked from the model's context                                                                                                                                                                                                    |
+| `max_turns`         | `int?`                  | Per-task turn cap (overrides default)                                                                                                                                                                                                          |
+| `attachments`       | `Path \| dict \| list?` | Inputs the agent can read. File `Path` → hard-linked (zero-copy, glob-visible), directory `Path` → mirrored as real dirs with file-level hard-links, `dict[str,str]` → inline file. Symlink fallback on cross-filesystem. Mixed list supported |
+| `skills`            | `Path \| str \| list?`  | Skill source folder(s). Each subdir with `SKILL.md` is linked into the run                                                                                                                                                                     |
+| `disallowed_skills` | `list[str]`             | Skill names to skip even if found in source                                                                                                                                                                                                    |
+| `agents`            | `dict[str, AgentDefinition]?` | Per-task subagent overrides. `None` falls back to `MotorConfig.default_agents`. `{}` explicitly disables. Requires `"Agent"` in `tools`.                                                                                              |
+| `output_schema`     | `type[BaseModel]?`      | Pydantic class — agent commits to this shape, returned in `RunResult.output_data`                                                                                                                                                              |
+| `session_id`        | `str?`                  | Resume an existing SDK session (chat-style). Most callers use `Chat` instead.                                                                                                                                                                  |
+| `workspace_dir`     | `Path?`                 | Pre-existing chat workspace to reuse. Set by `Chat` for multi-turn dialogs.                                                                                                                                                                    |
+
+---
+
+## `RunResult`
+
+What `motor.run(...)` returns.
+
+| Field           | Type          | What it is                                                                                    |
+|-----------------|---------------|-----------------------------------------------------------------------------------------------|
+| `run_id`        | `str`         | `run-<unix>-<8hex>`                                                                           |
+| `output_text`   | `str?`        | Final assistant text (free-form)                                                              |
+| `output_data`   | `BaseModel?`  | Schema-validated payload, present iff `output_schema` was set                                 |
+| `output_files`  | `list[OutputFile]` | Files the agent wrote under `outputs/` (with `.copy_to(...)` to persist)                |
+| `metadata`      | `RunMetadata` | `n_turns`, `n_tool_calls`, tokens, `total_cost_usd`, `duration_s`, `is_error`, `error_reason`, `was_interrupted`, `session_id` |
+| `audit_dir`     | `Path`        | `<run>/audit/` (`request_*.json` + `response_*.sse`)                                          |
+| `workspace_dir` | `Path`        | The full run dir                                                                              |
+| `blocks`        | `list`        | Raw assistant blocks (text + tool_use + thinking)                                             |
