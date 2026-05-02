@@ -125,50 +125,22 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 Pass any of these in `RunTask(tools=[...])`. The agent **only** sees what you list — `tools=[]` (the default) means pure
 reasoning, no actions.
 
-| Tool        | What it does                                                | Default in motor |
-|-------------|-------------------------------------------------------------|------------------|
-| `Read`      | Read a file under the run cwd                               | ready — list it in `tools=[...]` |
-| `Edit`      | Modify a file under the run cwd                             | ready — list it in `tools=[...]` |
-| `Write`     | Create files (guardrail confines to `outputs/`)             | ready — list it in `tools=[...]` |
-| `Glob`      | Pattern-match filenames                                     | ready — list it in `tools=[...]` |
-| `Grep`      | Pattern-match file content                                  | ready — list it in `tools=[...]` |
-| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) | ready — list it in `tools=[...]` |
-| `Skill`     | Invoke a `SKILL.md` skill linked into the run               | ready — list it in `tools=[...]` |
-| `WebSearch` | Live internet search                                        | **blocked by default** — listing it in `tools=[...]` opts in (conflict-resolution unblocks) |
-| `WebFetch`  | Fetch a URL to text/markdown                                | **blocked by default** — listing it in `tools=[...]` opts in |
-| `Agent`     | Spawn an isolated subagent (see [Subagents](#subagents))    | **blocked by default** — listing it in `tools=[...]` opts in |
+| Tool        | What it does                                                | Status    |
+|-------------|-------------------------------------------------------------|-----------|
+| `Read`      | Read a file under the run cwd                               | available |
+| `Edit`      | Modify a file under the run cwd                             | available |
+| `Write`     | Create files (guardrail confines to `outputs/`)             | available |
+| `Glob`      | Pattern-match filenames                                     | available |
+| `Grep`      | Pattern-match file content                                  | available |
+| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) | available |
+| `Skill`     | Invoke a `SKILL.md` skill linked into the run               | available |
+| `WebSearch` | Live internet search                                        | available |
+| `WebFetch`  | Fetch a URL to text/markdown                                | available |
+| `Agent`     | Spawn an isolated subagent (see [Subagents](#subagents))    | available |
 
-How "blocked by default" works: the motor ships ~25 tools in
-`DEFAULT_DISALLOWED_TOOLS` (web access, agentic spawning, plan-mode,
-cron, MCP auth flows, …). When you list a tool in `RunTask.tools`,
-the motor's conflict-resolution removes it from the resolved
-disallowed set automatically — no need to override
-`disallowed_tools=[]`. The other ~22 stay blocked.
-
-The SDK also ships a few more experimental tools (`TodoWrite`,
-notebook-edit, `EnterWorktree`, `EnterPlanMode`, …) that the motor
-blocks unconditionally — not validated end-to-end.
-
----
-
-### Why you might *still* pick the raw SDK
-
-The motor isn't a free lunch. Trade-offs to know about:
-
-- **Pre-1.0**: API still moves between minor versions. If you need a frozen contract, pin to an exact
-  `sophia-motor==X.Y.Z`.
-- **Audit trail is mandatory**: every run lives in `~/.sophia-motor/runs/<run_id>/` (request/response dumps +
-  workspace). That's a feature for compliance/review and a footprint you'll want to manage. `clean_runs(...)` is
-  shipped — wire it into your lifecycle if you produce many runs.
-- **Proxy in-process**: a local FastAPI + Uvicorn proxy boots on the first run (≈500 ms once, then idle). That's the
-  price of audit dump + selective system-reminder strip + per-turn events.
-- **Strict guardrail by default**: `Read`/`Edit` lexically restricted to the run's cwd, `Write` to `outputs/`, `Bash`
-  blocks dev/admin commands. If you intentionally need an unrestricted agent, set `MotorConfig(guardrail="permissive")`
-  or `"off"`.
-
-If your workload is "one prompt, one answer, no tools, no audit" — congrats, the SDK already does that, and you'll
-pay $0.05 per call instead of $0.003. For everything else (multi-turn, structured output, skills, attachments, parallel
-runs, defendable audit), the motor is the cheaper *and* the cleaner choice.
+`WebSearch` and `WebFetch` reach the live internet — opt in only when
+the task genuinely needs fresh information. See
+[`examples/web-search/`](examples/web-search/).
 
 ---
 
@@ -456,6 +428,27 @@ To run the standalone smoke test against the real API:
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... .venv/bin/python tests/run_smoke.py
 ```
+
+---
+
+## Why you might *still* pick the raw SDK
+
+The motor isn't a free lunch. Trade-offs to know about:
+
+- **Pre-1.0**: API still moves between minor versions. If you need a frozen contract, pin to an exact
+  `sophia-motor==X.Y.Z`.
+- **Audit trail is mandatory**: every run lives in `~/.sophia-motor/runs/<run_id>/` (request/response dumps +
+  workspace). That's a feature for compliance/review and a footprint you'll want to manage. `clean_runs(...)` is
+  shipped — wire it into your lifecycle if you produce many runs.
+- **Proxy in-process**: a local FastAPI + Uvicorn proxy boots on the first run (≈500 ms once, then idle). That's the
+  price of audit dump + selective system-reminder strip + per-turn events.
+- **Strict guardrail by default**: `Read`/`Edit` lexically restricted to the run's cwd, `Write` to `outputs/`, `Bash`
+  blocks dev/admin commands. If you intentionally need an unrestricted agent, set `MotorConfig(guardrail="permissive")`
+  or `"off"`.
+
+If your workload is "one prompt, one answer, no tools, no audit" — congrats, the SDK already does that, and you'll
+pay $0.05 per call instead of $0.003. For everything else (multi-turn, structured output, skills, attachments, parallel
+runs, defendable audit), the motor is the cheaper *and* the cleaner choice.
 
 ---
 
