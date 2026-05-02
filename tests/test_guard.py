@@ -174,13 +174,178 @@ async def test_strict_write_attachments_blocked(cwd: str) -> None:
 # strict mode — Bash
 # ─────────────────────────────────────────────────────────────────────────
 
-async def test_strict_bash_python_allowed(cwd: str) -> None:
+async def test_strict_bash_python_dash_c_safe_allowed(cwd: str) -> None:
+    """python -c with stdlib-safe code passes — that's what python-math uses."""
     hook = make_guard_hook("strict")
     out = await hook(
-        {"tool_name": "Bash", "tool_input": {"command": "python script.py"}, "cwd": cwd},
+        {"tool_name": "Bash",
+         "tool_input": {"command": 'python -c "print(round(0.175 * 9432, 2))"'},
+         "cwd": cwd},
         None, None,
     )
     assert out == {}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# strict mode — Python invocation guard (python -c whitelist + skill paths)
+# ─────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def cwd_with_skills(tmp_path: Path) -> tuple[str, Path]:
+    """Cwd that mimics the motor workspace layout: agent_cwd/ + ../.claude/skills/."""
+    run = tmp_path / "run"
+    cwd = run / "agent_cwd"
+    skills = run / ".claude" / "skills"
+    (cwd / "attachments").mkdir(parents=True)
+    (cwd / "outputs").mkdir(parents=True)
+    (skills / "python-math" / "scripts").mkdir(parents=True)
+    (skills / "apply-discount" / "scripts").mkdir(parents=True)
+    return str(cwd), skills
+
+
+@pytest.mark.parametrize("code", [
+    'print(1+1)',
+    'print(round(0.175 * 9432, 2))',
+    'import math; print(math.pi)',
+    'import statistics; print(statistics.mean([1,2,3]))',
+    'import json; print(json.dumps({}))',
+    'from math import sqrt; print(sqrt(2))',
+    'import decimal; print(decimal.Decimal("0.1") + decimal.Decimal("0.2"))',
+])
+async def test_python_dash_c_stdlib_safe_allowed(cwd: str, code: str) -> None:
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {"tool_name": "Bash", "tool_input": {"command": f'python -c "{code}"'}, "cwd": cwd},
+        None, None,
+    )
+    assert out == {}, f"expected allow for: python -c \"{code}\""
+
+
+@pytest.mark.parametrize("code,expect_in_reason", [
+    ('import shutil; shutil.rmtree("/etc")',           "shutil."),
+    ('import os; os.system("x")',                       "os."),
+    ('import subprocess; subprocess.run(["x"])',        "subprocess."),
+    ('import socket; socket.socket()',                  "socket."),
+    ('import urllib.request',                           "urllib"),
+    ('import requests',                                 "requests"),
+    ('__import__("os").system("x")',                    "__import__("),
+    ('exec("print(1)")',                                "exec("),
+    ('eval("1+1")',                                     "eval("),
+    ('compile("x", "", "exec")',                        "compile("),
+    # Properly escaped open(...) — the agent uses \" inside double quotes.
+    ('open(\\"/etc/passwd\\").read()',                  "open(\"/"),
+    ('open(0).read()',                                  "open(0"),
+    # __builtins__ is hit before getattr() in the pattern walk; that's fine,
+    # we just need *something* to refuse it.
+    ('getattr(__builtins__, "_"+"_import_"+"_")',       "__builtins__"),
+    ('import ctypes',                                   "ctypes"),
+])
+async def test_python_dash_c_dangerous_blocked(cwd: str, code: str, expect_in_reason: str) -> None:
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {"tool_name": "Bash", "tool_input": {"command": f'python -c "{code}"'}, "cwd": cwd},
+        None, None,
+    )
+    assert out.get("decision") == "block", f"expected block for: python -c \"{code}\""
+    assert expect_in_reason in out["reason"], f"reason missing {expect_in_reason!r}: {out['reason']}"
+
+
+async def test_python_skill_script_allowed(cwd_with_skills) -> None:
+    cwd, skills = cwd_with_skills
+    hook = make_guard_hook("strict")
+    cmd = f'python {skills}/python-math/scripts/foo.py 1500'
+    out = await hook(
+        {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd},
+        None, None,
+    )
+    assert out == {}
+
+
+async def test_python_skill_script_via_env_var_allowed(cwd_with_skills) -> None:
+    """`python $CLAUDE_CONFIG_DIR/skills/.../scripts/foo.py` — agent's idiomatic form."""
+    cwd, _ = cwd_with_skills
+    hook = make_guard_hook("strict")
+    cmd = 'python $CLAUDE_CONFIG_DIR/skills/apply-discount/scripts/discount.py 1500'
+    out = await hook(
+        {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd},
+        None, None,
+    )
+    assert out == {}
+
+
+async def test_python_skill_script_quoted_allowed(cwd_with_skills) -> None:
+    """Same as above but with the path wrapped in bash quotes."""
+    cwd, _ = cwd_with_skills
+    hook = make_guard_hook("strict")
+    cmd = 'python "$CLAUDE_CONFIG_DIR/skills/python-math/scripts/foo.py"'
+    out = await hook(
+        {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd},
+        None, None,
+    )
+    assert out == {}
+
+
+@pytest.mark.parametrize("path", [
+    "outputs/evil.py",
+    "attachments/foo.py",
+    "/tmp/x.py",
+    "/etc/cron.d/wat.py",
+    "$CLAUDE_CONFIG_DIR/skills/foo/SKILL.md",   # not under scripts/
+    "$CLAUDE_CONFIG_DIR/skills/foo",            # no scripts/ dir
+])
+async def test_python_non_skill_path_blocked(cwd_with_skills, path: str) -> None:
+    cwd, _ = cwd_with_skills
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {"tool_name": "Bash", "tool_input": {"command": f'python {path}'}, "cwd": cwd},
+        None, None,
+    )
+    assert out.get("decision") == "block", f"expected block for: python {path}"
+
+
+@pytest.mark.parametrize("cmd", [
+    "python",
+    "python3",
+    "python -m unittest",
+    "python -m timeit '1+1'",
+    "python -i foo.py",
+    "python -V",
+    "cat foo.py | python",
+    "echo 'import os' | python",
+    "python < /dev/stdin",
+    "python < /dev/fd/0",
+])
+async def test_python_other_invocation_shapes_blocked(cwd: str, cmd: str) -> None:
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd},
+        None, None,
+    )
+    assert out.get("decision") == "block", f"expected block for: {cmd}"
+
+
+async def test_python_dash_c_alongside_concat_allowed(cwd: str) -> None:
+    """`python -c "x" && echo ok` doesn't trip the parser on `&&`."""
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {"tool_name": "Bash",
+         "tool_input": {"command": 'python -c "print(1)" && echo ok'},
+         "cwd": cwd},
+        None, None,
+    )
+    assert out == {}
+
+
+async def test_permissive_python_unrestricted(cwd: str) -> None:
+    """Permissive mode does NOT apply the python-c whitelist — by design."""
+    hook = make_guard_hook("permissive")
+    out = await hook(
+        {"tool_name": "Bash",
+         "tool_input": {"command": 'python -c "import requests; requests.get(\\"https://x\\")"'},
+         "cwd": cwd},
+        None, None,
+    )
+    assert out == {}, "permissive should allow arbitrary python -c"
 
 
 @pytest.mark.parametrize("cmd", [

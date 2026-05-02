@@ -489,15 +489,39 @@ common gaps:
 | Per-run isolation | shared cwd | each run gets its own workspace under `<workspace_root>/<run_id>/`, deleted by `motor.clean_runs()` |
 | Audit trail | none | every request/response body persisted under `<run>/audit/` (when `proxy_dump_payloads=True`) |
 
-### What the motor does NOT control (be honest about this)
+### Python invocation guard (strict mode only)
 
-- **`python -c "..."` and `python script.py` are allowed** in strict
-  mode. Skills like the bundled `python-math` need them to compute
-  arithmetic without hallucinating; blocking `python` outright would
-  break a primary use case. The cost: a maliciously-prompted agent
-  could call `python -c "import shutil; shutil.rmtree('/etc')"` and
-  the guard wouldn't intercept the bytecode. The env strip still
-  hides host secrets, but the OS user's filesystem is reachable.
+`python` and `python3` are allowed in strict mode but the call shape
+is constrained:
+
+| Form | Verdict |
+|---|---|
+| `python -c "<code>"` with stdlib-safe imports + no `os`/`subprocess`/`socket`/`shutil`/`exec`/`eval`/`__import__`/`open('/abs/path')` | ✅ allowed |
+| `python <path>` where `<path>` is under `$CLAUDE_CONFIG_DIR/skills/<name>/scripts/` (a skill the dev registered) | ✅ allowed |
+| `python -c "..."` with `import os`, `subprocess`, `shutil`, `socket`, `urllib`, `requests`, `__import__(...)`, `exec(...)`, `eval(...)`, `open('/abs/path')`, `open(0)`, `__builtins__`, `getattr(...)` | ❌ blocked |
+| `python outputs/foo.py`, `python attachments/foo.py`, `python /tmp/foo.py` | ❌ blocked (Write+exec workaround closed) |
+| `python` (REPL), `python -m <anything>`, `python -i ...`, `python -V`, `python < /dev/stdin`, `cat foo.py \| python` | ❌ blocked |
+
+Stdlib whitelist for `python -c` imports: `math`, `statistics`,
+`decimal`, `fractions`, `json`, `re`, `datetime`, `random`,
+`itertools`, `functools`, `collections`, `string`, `textwrap`,
+`unicodedata`, `base64`, `hashlib`, `uuid`, `time`, `operator`,
+`copy`, `enum`, `typing`. Anything else needs to live as a registered
+skill — that's the trust passport.
+
+Skill = capability bounded. The dev decides "my agent can query
+Qdrant" by writing a `query-qdrant` skill with its own
+`scripts/search.py`. The agent runs that script through the
+skill-script whitelist; it cannot import `qdrant_client` directly via
+`python -c`. **Strict stays strict** — no flag explosion needed.
+
+In permissive mode the python-c whitelist does **not** apply: the dev
+has signed off on trusted-tool tier and any `python` call is fine
+(other than the cross-mode escapes like `bash -c`, `eval`, `/dev/tcp`,
+`| python`, ...).
+
+### What the motor still does NOT control (be honest about this)
+
 - **Skill scripts are trusted code** (yours). The motor symlinks
   whatever you put under `default_skills` into the run. If a skill's
   `scripts/foo.py` does something destructive, the guard won't catch
@@ -508,6 +532,11 @@ common gaps:
 - **`guardrail="off"`** is opt-in escape hatch. Use only inside an
   ephemeral container or a dedicated VM where blast radius is the
   container itself.
+- **Determined evasion** via heavy obfuscation (custom encoding +
+  `compile()` chains, ctype tricks via skills, etc.) is still
+  possible. The guard defeats the common prompt-injection and
+  honest-mistake cases — it is not a formal sandbox. For higher
+  assurance run as non-privileged OS user with read-only FS.
 
 For higher assurance: run the motor as a **non-privileged OS user**
 with no access to your dev `$HOME`, ideally inside a container with
