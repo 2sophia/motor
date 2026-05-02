@@ -837,6 +837,10 @@ class Motor:
                 task.output_schema if task.output_schema is not None
                 else cfg.default_output_schema
             ),
+            agents=(
+                task.agents if task.agents is not None
+                else dict(cfg.default_agents)
+            ),
             # Chat-mode bits don't have config defaults — they're either
             # set by Chat (which manages them) or left None for standalone
             # runs. Either way the value passes through unchanged.
@@ -1008,6 +1012,31 @@ class Motor:
         }
         if task.tools is not None:
             sdk_kwargs["tools"] = task.tools
+
+        # Subagents — by-design opt-in. If the caller asked for subagents
+        # via task.agents (or MotorConfig.default_agents), the `Agent` tool
+        # must be reachable: present in `tools` (when an explicit whitelist
+        # is given) and absent from `disallowed_tools`. We refuse to silently
+        # auto-fix the toolset — the dev declares what the agent can do.
+        if task.agents:
+            agent_in_tools = task.tools is None or "Agent" in task.tools
+            agent_blocked = "Agent" in disallowed
+            if not agent_in_tools or agent_blocked:
+                missing = []
+                if not agent_in_tools:
+                    missing.append("add 'Agent' to RunTask.tools (or MotorConfig.default_tools)")
+                if agent_blocked:
+                    missing.append(
+                        "remove 'Agent' from RunTask.disallowed_tools (or override "
+                        "MotorConfig.default_disallowed_tools to a list without it)"
+                    )
+                raise RuntimeError(
+                    "Subagents require the `Agent` tool to be reachable, but it is "
+                    "not — by design the motor does NOT auto-fix the toolset. To "
+                    "enable subagents: " + "; ".join(missing) + ". "
+                    "See examples/subagents/ for the canonical setup."
+                )
+            sdk_kwargs["agents"] = task.agents
 
         # Resume an existing SDK session (chat-style multi-turn). The CLI
         # replays the prior conversation history before processing the new

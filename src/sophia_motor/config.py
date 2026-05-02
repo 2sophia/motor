@@ -381,6 +381,18 @@ class MotorConfig(BaseModel):
         default_factory=list,
         description="Default disallowed_skills applied when RunTask.disallowed_skills is empty.",
     )
+    default_agents: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Default subagents (name → AgentDefinition) applied when "
+            "RunTask.agents is None. By design, this stays empty out-of-the-"
+            "box: the `Agent` tool is in default_disallowed_tools, so even "
+            "passing default_agents={...} alone does NOT enable subagents. "
+            "The caller must ALSO include 'Agent' in `tools` and remove it "
+            "from `disallowed_tools` — otherwise motor.run() raises a clear "
+            "RuntimeError. This explicit-opt-in keeps strict mode strict."
+        ),
+    )
     default_max_turns: int = 20
     default_timeout_seconds: int = 300
     default_disallowed_tools: list[str] = Field(

@@ -405,6 +405,64 @@ await motor.run(RunTask(
 
 ---
 
+## Subagents
+
+Spawn isolated specialist agents from the main run. Three patterns:
+
+```python
+from sophia_motor import Motor, MotorConfig, RunTask, AgentDefinition
+
+motor = Motor(MotorConfig(
+    default_agents={
+        "code-reviewer": AgentDefinition(
+            description="Quality + security reviewer.",
+            prompt="You are a senior reviewer. List concrete improvements.",
+            tools=["Read", "Grep", "Glob"],
+            model="sonnet",          # subagents can use a different model
+        ),
+    },
+    # Three explicit moves required to enable subagents — by design.
+    default_tools=["Read", "Grep", "Glob", "Agent"],
+    default_disallowed_tools=[],
+))
+
+await motor.run(RunTask(prompt="Review the auth module."))   # auto-routed
+await motor.run(RunTask(prompt="Use the code-reviewer agent on auth.py."))   # explicit
+```
+
+**Three use cases**, see [examples/subagents/](./examples/subagents/):
+
+| Pattern | When |
+|---|---|
+| **declarative** | The model picks the right specialist based on `description` + prompt |
+| **explicit** | The prompt names the subagent: "Use the X agent to ..." |
+| **general-purpose** | No custom agents — just expose `Agent` and the SDK provides the built-in `general-purpose` subagent for context-isolated exploration |
+
+### Why the opt-in is explicit (no auto-magic)
+
+`"Agent"` is in `default_disallowed_tools` by design. Defining
+`default_agents={...}` alone does NOT enable subagents — `motor.run()`
+raises a clear `RuntimeError` with the missing piece. **Three moves**
+the dev makes deliberately:
+
+1. `default_agents={...}` (or per-task `agents={...}`)
+2. `"Agent"` in `default_tools` (or per-task `tools`)
+3. `"Agent"` removed from `default_disallowed_tools`
+
+Strict mode stays strict. The dev declares what the agent can do; no
+silent enabling of the code-execution surface.
+
+### Token cost
+
+Each subagent is a fresh conversation. Three subagents in parallel ≈
+three conversations worth of tokens. The break-even vs. inline reads
+is around 4-5 file reads inside the subagent — below that, do it
+inline; above it, the context isolation pays back.
+
+The motor's PreToolUse guard (`strict`/`permissive`) also applies
+inside subagents — they inherit the parent's tool definitions and the
+hook fires on every Bash/Read/Edit/Write the subagent attempts.
+
 ## Networking
 
 The proxy listens on **127.0.0.1 with a kernel-assigned port** by default

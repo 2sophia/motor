@@ -5,6 +5,8 @@
 Public API:
     from sophia_motor import Motor, MotorConfig, RunTask, RunResult, clean_runs
 """
+from claude_agent_sdk import AgentDefinition
+
 from ._adapters import (
     AnthropicAdapter,
     UpstreamAdapter,
@@ -77,4 +79,6 @@ __all__ = [
     "VLLMAdapter",
     # chat
     "Chat",
+    # subagents (re-exported from claude-agent-sdk for ergonomics)
+    "AgentDefinition",
 ]

@@ -111,6 +111,15 @@ class RunTask:
     skills: SkillsInput = None
     disallowed_skills: list[str] = field(default_factory=list)
 
+    # Subagents — dict of name → AgentDefinition (forwarded to ClaudeAgentOptions).
+    # When non-empty, the model spawns isolated subagents via the Agent tool. The
+    # caller MUST also include "Agent" in `tools` and ensure it is NOT in
+    # `disallowed_tools` — otherwise the motor raises a clear RuntimeError at
+    # run time. None falls back to MotorConfig.default_agents (full replacement,
+    # never merged). Pass `{}` to explicitly disable subagents for this task even
+    # when the motor has defaults set.
+    agents: Optional[dict[str, Any]] = None
+
     # Strict structured output. When provided, the motor extracts the JSON
     # Schema via `output_schema.model_json_schema()` and forwards it to the
     # CLI via `--json-schema`. The CLI validates the model's structured
