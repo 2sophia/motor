@@ -125,26 +125,29 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 Pass any of these in `RunTask(tools=[...])`. The agent **only** sees what you list — `tools=[]` (the default) means pure
 reasoning, no actions.
 
-| Tool        | What it does                                                | Status    |
-|-------------|-------------------------------------------------------------|-----------|
-| `Read`      | Read a file under the run cwd                               | available |
-| `Edit`      | Modify a file under the run cwd                             | available |
-| `Write`     | Create files (guardrail confines to `outputs/`)             | available |
-| `Glob`      | Pattern-match filenames                                     | available |
-| `Grep`      | Pattern-match file content                                  | available |
-| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) | available |
-| `Skill`     | Invoke a `SKILL.md` skill linked into the run               | available |
-| `WebSearch` | Live internet search                                        | available |
-| `WebFetch`  | Fetch a URL to text/markdown                                | available |
+| Tool        | What it does                                                | Default in motor |
+|-------------|-------------------------------------------------------------|------------------|
+| `Read`      | Read a file under the run cwd                               | ready — list it in `tools=[...]` |
+| `Edit`      | Modify a file under the run cwd                             | ready — list it in `tools=[...]` |
+| `Write`     | Create files (guardrail confines to `outputs/`)             | ready — list it in `tools=[...]` |
+| `Glob`      | Pattern-match filenames                                     | ready — list it in `tools=[...]` |
+| `Grep`      | Pattern-match file content                                  | ready — list it in `tools=[...]` |
+| `Bash`      | Run shell commands (guardrail-filtered: no curl/git/sudo/…) | ready — list it in `tools=[...]` |
+| `Skill`     | Invoke a `SKILL.md` skill linked into the run               | ready — list it in `tools=[...]` |
+| `WebSearch` | Live internet search                                        | **blocked by default** — listing it in `tools=[...]` opts in (conflict-resolution unblocks) |
+| `WebFetch`  | Fetch a URL to text/markdown                                | **blocked by default** — listing it in `tools=[...]` opts in |
+| `Agent`     | Spawn an isolated subagent (see [Subagents](#subagents))    | **blocked by default** — listing it in `tools=[...]` opts in |
 
-`WebSearch` and `WebFetch` reach the live internet — the agent can follow links anywhere on the public web. Most runs
-don't need it; opt in when the task genuinely needs fresh information. See
-[`examples/web-search/`](examples/web-search/).
+How "blocked by default" works: the motor ships ~25 tools in
+`DEFAULT_DISALLOWED_TOOLS` (web access, agentic spawning, plan-mode,
+cron, MCP auth flows, …). When you list a tool in `RunTask.tools`,
+the motor's conflict-resolution removes it from the resolved
+disallowed set automatically — no need to override
+`disallowed_tools=[]`. The other ~22 stay blocked.
 
-`Agent` is the entry point for [subagents](#subagents) — opt-in (the
-default `disallowed_tools` blocks it). The SDK also ships a few more
-experimental tools (`TodoWrite`, plan-mode, notebook-edit, cron, ...)
-that the motor blocks by default; they're not validated end-to-end.
+The SDK also ships a few more experimental tools (`TodoWrite`,
+notebook-edit, `EnterWorktree`, `EnterPlanMode`, …) that the motor
+blocks unconditionally — not validated end-to-end.
 
 ---
 
@@ -171,160 +174,32 @@ runs, defendable audit), the motor is the cheaper *and* the cleaner choice.
 
 ## Examples
 
-Things you **cannot** ship with a single LLM call. Same `motor` instance, different RunTask.
+Things you **cannot** ship with a single LLM call — same `motor`
+instance, different `RunTask`. Each row is a **runnable folder** in
+[`examples/`](./examples/) (copy-paste ready, has its own README +
+`main.py`).
 
-```python
-from sophia_motor import Motor, RunTask
+| Folder | What it shows |
+|---|---|
+| [quickstart](./examples/quickstart) | The smallest possible run — prompt → answer |
+| [structured-output](./examples/structured-output) | Pydantic schema in, typed instance out (`output_data`) |
+| [attachments](./examples/attachments) | Hand the agent a folder of files — Glob + Read on hard-links, returns typed findings |
+| [skills](./examples/skills) | Drop `SKILL.md` files, the agent picks which to call (python-math, apply-discount) |
+| [file-creation](./examples/file-creation) | Agent writes files — `Write`/`Edit`, `result.output_files`, persist outside the workspace |
+| [web-search](./examples/web-search) | Live internet — `WebSearch` + `WebFetch`, typed brief with citations |
+| [streaming](./examples/streaming) | Render token-by-token — `motor.stream(task)` with typed chunks |
+| [interrupt](./examples/interrupt) | Cancel an in-flight run — `motor.interrupt()` + `was_interrupted` flag |
+| [concurrency](./examples/concurrency) | One motor, N runs in parallel via `asyncio.gather` (chat-backend pattern) |
+| [chat](./examples/chat) | Multi-turn dialog — `motor.chat()` + `chat.send()` with persistent SDK session |
+| [console](./examples/console) | Interactive REPL — `motor.console()` with rich + prompt-toolkit |
+| [events](./examples/events) | Hook into every turn — `on_event`, `on_log`, structured event bus |
+| [system-prompt](./examples/system-prompt) | Same prompt, three personas — `system` is the cheapest knob |
+| [vllm](./examples/vllm) | Self-hosted Qwen via vLLM — same motor, `VLLMAdapter` upstream |
+| [docker](./examples/docker) | Containerized run — explicit `workspace_root` + volume for persistence |
+| [subagents](./examples/subagents) | Spawn specialist subagents in isolated contexts (declarative + explicit) |
 
-motor = Motor()  # one instance, used everywhere below
-```
-
-### 1 · Investigate a folder, find what matters
-
-The agent walks the directory autonomously: globs files, reads the relevant ones, follows references, compiles a typed
-list of findings — all in one `await`.
-
-```python
-from pathlib import Path
-from typing import Literal
-from pydantic import BaseModel
-
-
-class AuthIssue(BaseModel):
-    file: str
-    line_hint: str
-    severity: Literal["low", "medium", "high", "critical"]
-    quote: str  # verbatim from the source
-    fix: str
-
-
-result = await motor.run(RunTask(
-    prompt=(
-        "Audit our authentication code. Find every place that handles tokens, "
-        "passwords, or session state. Flag anything risky with severity, the "
-        "exact code line as quote, and a concrete fix."
-    ),
-    tools=["Read", "Glob", "Grep"],
-    attachments=Path("./src/"),
-    output_schema=list[AuthIssue],  # ← N findings, not one
-    max_turns=20,
-))
-
-for issue in result.output_data:
-    print(f"[{issue.severity}] {issue.file} → {issue.fix}")
-```
-
-What happens behind that single `await`: the agent globs, greps, reads files it didn't know existed before, reasons,
-then commits to a validated list of `AuthIssue`. Try doing that with a single LLM call — you'd have to script the file
-walk yourself, parse the responses, retry on bad JSON, and pray.
-
-### 2 · Cross-reference multiple sources
-
-The agent reads several documents, finds connections you didn't ask about explicitly, and returns the contradictions
-you'd have spent an afternoon hunting.
-
-```python
-class Contradiction(BaseModel):
-    claim_a: str  # verbatim
-    source_a: str  # filename + page/section
-    claim_b: str  # verbatim
-    source_b: str
-    why: str  # why these conflict
-
-
-result = await motor.run(RunTask(
-    prompt=(
-        "Read every document in attachments/. Find pairs of claims that "
-        "contradict each other across sources. Cite verbatim both sides "
-        "and explain the conflict."
-    ),
-    tools=["Read", "Glob"],
-    attachments=Path("./research_papers/"),
-    output_schema=list[Contradiction],
-    max_turns=25,
-))
-```
-
-### 3 · Orchestrate skills — the agent picks which to call
-
-Drop a folder of `SKILL.md` files. The agent reads their descriptions, decides which to use for the input, calls them in
-the right order, and composes the answer into your typed schema.
-
-```python
-class RiskFinding(BaseModel):
-    severity: Literal["low", "medium", "high"]
-    quote: str  # verbatim from the contract
-    impact: str
-
-
-class ContractAnalysis(BaseModel):
-    parties: list[str]
-    key_obligations: list[str]
-    risks: list[RiskFinding]
-    short_summary: str
-
-
-result = await motor.run(RunTask(
-    prompt=(
-        "Analyze attachments/contract.pdf. Use the skills you have to "
-        "extract parties, obligations and risks, then compose the answer."
-    ),
-    tools=["Read", "Skill"],
-    attachments=Path("./contract.pdf"),
-    skills=Path("./skills/"),  # contains: extract-entities, risk-score, ...
-    output_schema=ContractAnalysis,
-    max_turns=15,
-))
-
-analysis: ContractAnalysis = result.output_data
-high_risks = [r for r in analysis.risks if r.severity == "high"]
-```
-
-The agent might call `extract-entities` to find the parties, then `risk-score` on the obligations, choosing the path
-itself from the SKILL.md descriptions. You write skills, the agent composes them — and you get back a typed object, not
-a free-form report.
-
-### 4 · Decompose, decide, justify — typed end-to-end
-
-Compliance pattern: an obligation may have N sub-requirements, your candidate controls cover some and miss others. The
-agent decomposes, matches each sub-req to evidence, and produces a verdict with citations — schema-strict.
-
-```python
-from typing import Literal
-
-
-class SubRequirement(BaseModel):
-    text: str
-    covered: bool
-    evidence: str  # which control + verbatim quote (or "none")
-
-
-class ComplianceVerdict(BaseModel):
-    verdict: Literal["FULL", "PARTIAL", "NONE"]
-    sub_requirements: list[SubRequirement]
-    overall_reasoning: str
-
-
-result = await motor.run(RunTask(
-    prompt=(
-        "Obligation: {obligation_text}\n\n"
-        "Candidate controls:\n{controls_block}\n\n"
-        "Decompose the obligation into sub-requirements. For each one, "
-        "say if it's covered, by which control, with the exact quote. "
-        "Return a final verdict."
-    ).format(obligation_text=..., controls_block=...),
-    tools=["Read"],
-    attachments=Path("./compliance_corpus/"),
-    output_schema=ComplianceVerdict,
-    max_turns=15,
-))
-
-# result.output_data: a real ComplianceVerdict you can hand straight to a downstream system,
-# audit log, or human reviewer — every sub-req traceable to a verbatim citation.
-```
-
-This is **one Python `await`** doing what would otherwise be a 200-line orchestration script with prompt engineering,
-JSON parsing, retry loops, and schema-validation glue. The agent is the orchestration; your program holds the contract.
+The README from here on focuses on *concepts* — the why, the contract,
+the cost story. Code lives in the folders above.
 
 ---
 
