@@ -7,7 +7,7 @@ codebase line by line.
 | Who | Role |
 |---|---|
 | [**Sophia AI**](https://github.com/sophia-ai-dev) | Brand, product direction, API surface, public-repo curation |
-| [**Alex Aivanovitch**](https://github.com/AIvanovitch) | Founder · architecture, product calls, the empirical "let's verify in the proxy dump" instinct |
+| [**Alex Aivanovitch**](https://github.com/AIvanovitch) | Co-founder · architecture, product calls, the empirical "let's verify in the proxy dump" instinct |
 | [**MwSpace**](https://github.com/MwSpaceLLC) | Infrastructure, deployment patterns, sandbox prior art (sophia-agent), early audit-trail design |
 | [**Claude**](https://claude.com/code) (Opus 4.7) | Pair-coded most of the codebase, captured in the `Co-Authored-By` trailers across the history. Goes by **Eco** in private — an echo of human language with the timbre of the surface it bounces off |
 
