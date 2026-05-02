@@ -52,8 +52,9 @@ async def main() -> None:
                 tools=["Read"],
             ),
         },
+        # Whitelisting 'Agent' here is enough — the motor's conflict-resolution
+        # drops Agent from the default disallowed block automatically.
         default_tools=["Read", "Agent"],
-        default_disallowed_tools=[],
     ))
 
     # The prompt names the subagent — the main agent is forced to delegate.

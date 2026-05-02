@@ -3,12 +3,15 @@
 """Subagent pass-through + opt-in validation.
 
 By design, MotorConfig.default_disallowed_tools includes "Agent". The dev who
-wants subagents must opt in by:
-  1. adding "Agent" to RunTask.tools (or MotorConfig.default_tools)
-  2. removing "Agent" from RunTask.disallowed_tools (or overriding the default)
-  3. passing RunTask.agents={...} (or MotorConfig.default_agents={...})
+wants subagents opts in with two deliberate moves:
 
-Anything missing → RuntimeError at run time with clear instructions.
+  1. add "Agent" to RunTask.tools (or MotorConfig.default_tools)
+  2. pass RunTask.agents={...} (or MotorConfig.default_agents={...})
+
+The motor's tools-vs-disallowed conflict-resolution drops Agent from the
+default disallowed block automatically when (1) is in place, so the rest
+of the default blocks (WebFetch, WebSearch, TodoWrite, Monitor, ...) stay
+active. Anything missing → RuntimeError at run time with clear instructions.
 """
 from __future__ import annotations
 
@@ -44,14 +47,16 @@ async def test_default_agents_field_defaults_to_empty(tmp_path: Path) -> None:
     assert cfg.default_agents == {}
 
 
-async def test_explicit_setup_passes_through_to_sdk(tmp_path: Path) -> None:
-    """tools=['Agent'] + disallowed_tools=[] + agents={'x': ...} → forwarded."""
+async def test_minimal_opt_in_passes_through_to_sdk(tmp_path: Path) -> None:
+    """Minimal opt-in: Agent in tools + agents={...}. The motor's conflict-
+    resolution removes Agent from the default disallowed block, leaving the
+    other 16+ blocks intact. NO `disallowed_tools=[]` override needed.
+    """
     motor = Motor(MotorConfig(api_key="dummy", workspace_root=tmp_path,
                               console_log_enabled=False))
     task = motor._apply_config_defaults(RunTask(
         prompt="x",
         tools=["Read", "Agent"],
-        disallowed_tools=[],
         agents={"reviewer": _agent_def()},
     ))
     opts = motor._build_sdk_options(
@@ -60,7 +65,11 @@ async def test_explicit_setup_passes_through_to_sdk(tmp_path: Path) -> None:
     )
     assert "reviewer" in opts.agents
     assert opts.tools == ["Read", "Agent"]
-    assert "Agent" not in opts.disallowed_tools
+    assert "Agent" not in opts.disallowed_tools, "conflict-resolution should drop Agent"
+    # The other defaults must still be active — strict stays strict.
+    assert "WebFetch" in opts.disallowed_tools
+    assert "WebSearch" in opts.disallowed_tools
+    assert "TodoWrite" in opts.disallowed_tools
 
 
 async def test_default_agents_applied_when_task_omits(tmp_path: Path) -> None:
@@ -70,7 +79,7 @@ async def test_default_agents_applied_when_task_omits(tmp_path: Path) -> None:
         console_log_enabled=False,
         default_agents={"shared": _agent_def()},
         default_tools=["Read", "Agent"],
-        default_disallowed_tools=[],  # explicit override removes Agent block
+        # No default_disallowed_tools override — relies on conflict-resolution.
     ))
     task = motor._apply_config_defaults(RunTask(prompt="x"))
     assert "shared" in task.agents
@@ -88,7 +97,6 @@ async def test_task_agents_override_default(tmp_path: Path) -> None:
         console_log_enabled=False,
         default_agents={"shared": _agent_def()},
         default_tools=["Read", "Agent"],
-        default_disallowed_tools=[],
     ))
     task = motor._apply_config_defaults(RunTask(
         prompt="x",
@@ -105,7 +113,6 @@ async def test_task_agents_empty_dict_disables_subagents(tmp_path: Path) -> None
         console_log_enabled=False,
         default_agents={"shared": _agent_def()},
         default_tools=["Read", "Agent"],
-        default_disallowed_tools=[],
     ))
     task = motor._apply_config_defaults(RunTask(
         prompt="x",
@@ -127,7 +134,6 @@ async def test_agents_without_agent_in_tools_raises(tmp_path: Path) -> None:
     task = motor._apply_config_defaults(RunTask(
         prompt="x",
         tools=["Read"],
-        disallowed_tools=[],
         agents={"x": _agent_def()},
     ))
     with pytest.raises(RuntimeError, match="add 'Agent' to RunTask.tools"):
@@ -180,7 +186,6 @@ async def test_agent_built_in_general_purpose_pattern(tmp_path: Path) -> None:
     task = motor._apply_config_defaults(RunTask(
         prompt="x",
         tools=["Read", "Agent"],
-        disallowed_tools=[],
         # agents intentionally omitted (None → falls back to {} default)
     ))
     opts = motor._build_sdk_options(

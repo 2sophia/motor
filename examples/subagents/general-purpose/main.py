@@ -27,11 +27,11 @@ TARGET_DIR = Path(__file__).resolve().parents[3] / "src" / "sophia_motor"
 
 
 async def main() -> None:
-    # No custom agents — just expose the Agent tool. The motor still
-    # demands explicit opt-in: `Agent` whitelisted + nothing in disallowed.
+    # No custom agents — just expose the Agent tool. Whitelisting 'Agent'
+    # in default_tools is enough: the motor's conflict-resolution removes
+    # it from the default disallowed block automatically.
     motor = Motor(MotorConfig(
         default_tools=["Read", "Glob", "Grep", "Agent"],
-        default_disallowed_tools=[],
         default_max_turns=15,
     ))
 

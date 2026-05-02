@@ -12,8 +12,7 @@ motor = Motor(MotorConfig(
         "code-reviewer": AgentDefinition(description="...", prompt="...", tools=[...]),
         "doc-checker":   AgentDefinition(description="...", prompt="...", tools=[...]),
     },
-    default_tools=["Read", "Grep", "Glob", "Agent"],   # Agent must be reachable
-    default_disallowed_tools=[],                       # remove the default Agent block
+    default_tools=["Read", "Grep", "Glob", "Agent"],   # Agent must be in tools
 ))
 
 # Same prompt, the model picks per-task based on the descriptions.
@@ -24,15 +23,16 @@ await motor.run(RunTask(prompt="Look at calc.py: docs match? code quality?"))
 
 The motor's `default_disallowed_tools` includes `"Agent"` by design — so a
 plain `Motor()` cannot spawn subagents until the dev declares it wants
-them. Three explicit moves enable subagents:
+them. **Two explicit moves** enable subagents:
 
 1. `default_agents={...}` (or per-task `agents={...}`)
 2. `"Agent"` in `default_tools` (or per-task `tools`)
-3. `"Agent"` removed from `default_disallowed_tools`
 
-Without any one of these, `motor.run()` raises a `RuntimeError` with a
-message that points to the missing piece. **Strict mode stays strict by
-default** — there's no silent enabling of code-execution surfaces.
+When `Agent` is whitelisted in `tools`, the motor's conflict-resolution
+removes it from the default disallowed block automatically. The other
+~16 default blocks (WebFetch, WebSearch, TodoWrite, Monitor, ...) stay
+active. Without the two moves, `motor.run()` raises a `RuntimeError`
+with a clear message pointing at what's missing.
 
 ## Run
 

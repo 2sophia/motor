@@ -60,9 +60,10 @@ async def main() -> None:
                 tools=["Read", "Grep"],
             ),
         },
-        # Opt-in: 'Agent' tool reachable + nothing in disallowed.
+        # Opt-in: just whitelist 'Agent' in the tools list. The motor's
+        # conflict-resolution removes Agent from the default disallowed
+        # block automatically — no need to wipe the rest.
         default_tools=["Read", "Grep", "Glob", "Agent"],
-        default_disallowed_tools=[],
         default_max_turns=10,
     ))
 

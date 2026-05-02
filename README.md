@@ -421,9 +421,9 @@ motor = Motor(MotorConfig(
             model="sonnet",          # subagents can use a different model
         ),
     },
-    # Three explicit moves required to enable subagents — by design.
+    # Whitelist 'Agent' in tools — the motor's conflict-resolution removes
+    # it from the default disallowed block automatically.
     default_tools=["Read", "Grep", "Glob", "Agent"],
-    default_disallowed_tools=[],
 ))
 
 await motor.run(RunTask(prompt="Review the auth module."))   # auto-routed
@@ -442,15 +442,20 @@ await motor.run(RunTask(prompt="Use the code-reviewer agent on auth.py."))   # e
 
 `"Agent"` is in `default_disallowed_tools` by design. Defining
 `default_agents={...}` alone does NOT enable subagents — `motor.run()`
-raises a clear `RuntimeError` with the missing piece. **Three moves**
-the dev makes deliberately:
+raises a clear `RuntimeError`. **Two deliberate moves** the dev makes:
 
 1. `default_agents={...}` (or per-task `agents={...}`)
 2. `"Agent"` in `default_tools` (or per-task `tools`)
-3. `"Agent"` removed from `default_disallowed_tools`
 
-Strict mode stays strict. The dev declares what the agent can do; no
-silent enabling of the code-execution surface.
+The motor's `tools`-vs-`disallowed_tools` conflict resolution removes
+`Agent` from the block automatically when it's whitelisted in `tools`,
+so the rest of the default disallowed list (WebFetch, WebSearch,
+TodoWrite, Monitor, mcp_*_authenticate, ...) **stays active** —
+strict mode stays strict.
+
+Earlier docs suggested also passing `default_disallowed_tools=[]` to
+opt in. **Don't** — that wipes all 17+ default blocks, not just
+`Agent`. The two-move pattern above is the right one.
 
 ### Token cost
 
