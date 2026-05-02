@@ -457,6 +457,19 @@ Earlier docs suggested also passing `default_disallowed_tools=[]` to
 opt in. **Don't** — that wipes all 17+ default blocks, not just
 `Agent`. The two-move pattern above is the right one.
 
+### Only your custom subagents are exposed
+
+Out of the box, the bundled Claude Code CLI also injects 4 built-in
+subagents (`Explore`, `general-purpose`, `Plan`, `statusline-setup`)
+into the Agent tool description, alongside whatever you declare. The
+model frequently picks `general-purpose` over your custom ones.
+
+The motor sets `CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1` in the
+subprocess env by default, so the model **only** sees the agents you
+declared in `default_agents` / `agents`. No noise, no surprise routing.
+Empirically verified via proxy dump: with the flag the Agent tool
+description lists exactly the custom names, nothing else.
+
 ### Token cost
 
 Each subagent is a fresh conversation. Three subagents in parallel ≈
@@ -464,9 +477,14 @@ three conversations worth of tokens. The break-even vs. inline reads
 is around 4-5 file reads inside the subagent — below that, do it
 inline; above it, the context isolation pays back.
 
-The motor's PreToolUse guard (`strict`/`permissive`) also applies
-inside subagents — they inherit the parent's tool definitions and the
-hook fires on every Bash/Read/Edit/Write the subagent attempts.
+### Security inside subagents
+
+The motor's PreToolUse guard (`strict`/`permissive`) **also applies
+inside subagents** — verified empirically: a subagent attempting
+`Glob /etc` is blocked by the same hook that blocks the parent.
+Subagents inherit a subset of the parent's tools (with `Agent`
+removed automatically — no nested spawning), so a subagent can never
+reach a tool the parent doesn't have.
 
 ## Networking
 

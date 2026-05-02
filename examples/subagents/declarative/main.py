@@ -67,13 +67,15 @@ async def main() -> None:
         default_max_turns=10,
     ))
 
-    # The agent decides which subagent to spawn based on the prompt.
+    # Pass the files into the sandbox via attachments — the agent will
+    # see them under attachments/ inside its cwd.
     result = await motor.run(RunTask(
         prompt=(
-            f"Look at the Python files under {SAMPLE_DIR}. First check whether "
-            f"the docstrings still match the code, then review code quality. "
-            f"Return one section per subagent's findings."
+            "Look at every Python file under attachments/. Use the doc-checker "
+            "agent to verify docstrings match the code, and the code-reviewer "
+            "agent to audit quality. Report one section per subagent's findings."
         ),
+        attachments=SAMPLE_DIR,
     ))
 
     print("─" * 60)

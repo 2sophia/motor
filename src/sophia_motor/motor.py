@@ -964,6 +964,15 @@ class Motor:
             "DISABLE_AUTOUPDATER": "1",
             "DISABLE_AUTO_COMPACT": "1",
             "DISABLE_BUG_COMMAND": "1",
+            # Strip the bundled CLI's built-in subagents (Explore,
+            # general-purpose, Plan, statusline-setup, ...) from the
+            # Agent tool description. Without this, every custom agent
+            # the dev declares is mixed with 4+ Claude-Code-CLI defaults
+            # the dev did not ask for, and the model frequently picks
+            # one of those (e.g. general-purpose) over the custom ones.
+            # Empirically verified via proxy dump (request_001 Agent
+            # tool description) on 2026-05-02.
+            "CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS": "1",
         }
         if self.config.disable_claude_md:
             # Native env-var alternative to tengu_paper_halyard in
