@@ -29,7 +29,7 @@ python main.py
 | 13 | [console](./console)                         | Interactive REPL — `motor.console()` with rich + prompt-toolkit.         |
 | 14 | [chat](./chat)                               | Multi-turn dialog — `motor.chat()` + `chat.send()` with memory.          |
 | 15 | [docker](./docker)                           | Containerized run — explicit `workspace_root` + volume for persistence.  |
-| 16 | [subagents](./subagents)                     | Spawn specialists in isolated contexts — declarative, explicit, or built-in `general-purpose`. |
+| 16 | [subagents](./subagents)                     | Spawn specialist subagents in isolated contexts — declarative or explicit invocation by name. |
 
 Every example uses the strict guardrail (the default), so the agent is
 sandboxed inside its per-run workspace from the first call.

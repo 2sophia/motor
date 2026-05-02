@@ -430,13 +430,12 @@ await motor.run(RunTask(prompt="Review the auth module."))   # auto-routed
 await motor.run(RunTask(prompt="Use the code-reviewer agent on auth.py."))   # explicit
 ```
 
-**Three use cases**, see [examples/subagents/](./examples/subagents/):
+**Two use cases**, see [examples/subagents/](./examples/subagents/):
 
 | Pattern | When |
 |---|---|
 | **declarative** | The model picks the right specialist based on `description` + prompt |
 | **explicit** | The prompt names the subagent: "Use the X agent to ..." |
-| **general-purpose** | No custom agents — just expose `Agent` and the SDK provides the built-in `general-purpose` subagent for context-isolated exploration |
 
 ### Why the opt-in is explicit (no auto-magic)
 
@@ -469,6 +468,13 @@ subprocess env by default, so the model **only** sees the agents you
 declared in `default_agents` / `agents`. No noise, no surprise routing.
 Empirically verified via proxy dump: with the flag the Agent tool
 description lists exactly the custom names, nothing else.
+
+If you really want the bundled CLI built-ins back (rare — useful only
+to e.g. let the model use `Plan` for multi-step decomposition without
+defining a custom agent), pass `default_agents={...}` plus a `RunTask`
+that overrides the env via system or skill. The flag is hard-coded in
+the motor on purpose: the lib is built around custom subagents the
+dev declared, not the CLI's interactive defaults.
 
 ### Token cost
 
