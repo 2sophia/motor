@@ -470,6 +470,50 @@ Motor(MotorConfig(guardrail="off"))  # no hook (you take responsibility)
 | **permissive** | unrestricted              | unrestricted    | only `sudo`, exfiltration patterns, `/dev/tcp`, `..` escapes, destructive commands                                       |
 | **off**        | unrestricted              | unrestricted    | unrestricted                                                                                                             |
 
+### What the motor controls (that the raw SDK doesn't)
+
+The Claude Agent SDK ships a CLI that, by default, inherits the entire
+environment of your Python process and runs Bash freely. If you embed
+the raw SDK in a backend that has `MONGODB_URI`, `STRIPE_SECRET_KEY`,
+or `AWS_ACCESS_KEY_ID` in its env, **the model can read them** with a
+single `os.environ` print or `env` shell command. The motor closes the
+common gaps:
+
+| Layer | Raw SDK | sophia-motor |
+|---|---|---|
+| Subprocess env | full inherit (host secrets visible) | **only** `PATH`, `ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, model + `DISABLE_*` flags. Nothing else leaks |
+| Filesystem reads | unrestricted | `Read/Edit/Glob/Grep` fenced inside the run cwd (strict) |
+| Filesystem writes | unrestricted | `Write` restricted to `outputs/` (strict), with symlink-escape resolution |
+| Bash blocklist | none | dev/admin commands + `bash -c` + `..` + `/dev/tcp` + `eval`/`source`/`exec` redirects |
+| Exfiltration patterns | none | `curl`/`wget` with `--data`/`--upload-file` blocked in **both** strict and permissive |
+| Per-run isolation | shared cwd | each run gets its own workspace under `<workspace_root>/<run_id>/`, deleted by `motor.clean_runs()` |
+| Audit trail | none | every request/response body persisted under `<run>/audit/` (when `proxy_dump_payloads=True`) |
+
+### What the motor does NOT control (be honest about this)
+
+- **`python -c "..."` and `python script.py` are allowed** in strict
+  mode. Skills like the bundled `python-math` need them to compute
+  arithmetic without hallucinating; blocking `python` outright would
+  break a primary use case. The cost: a maliciously-prompted agent
+  could call `python -c "import shutil; shutil.rmtree('/etc')"` and
+  the guard wouldn't intercept the bytecode. The env strip still
+  hides host secrets, but the OS user's filesystem is reachable.
+- **Skill scripts are trusted code** (yours). The motor symlinks
+  whatever you put under `default_skills` into the run. If a skill's
+  `scripts/foo.py` does something destructive, the guard won't catch
+  it — the dev who registered the skill has signed off on it.
+- **The `Skill` tool itself is a code-execution surface** by design.
+  Strip it from `tools` if your trust boundary doesn't include
+  whoever wrote the skills.
+- **`guardrail="off"`** is opt-in escape hatch. Use only inside an
+  ephemeral container or a dedicated VM where blast radius is the
+  container itself.
+
+For higher assurance: run the motor as a **non-privileged OS user**
+with no access to your dev `$HOME`, ideally inside a container with
+read-only FS except `/data`. The guard is the first line, the OS is
+the last.
+
 ---
 
 ## Debug mode
