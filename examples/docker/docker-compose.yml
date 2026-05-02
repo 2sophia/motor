@@ -1,0 +1,10 @@
+services:
+  motor:
+    build: .
+    image: sophia-motor-demo:latest
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in your shell or .env}
+    volumes:
+      # Persist audit dumps + trace files across `docker compose up` runs.
+      # Drop this line and runs vanish with the container.
+      - ./data:/data

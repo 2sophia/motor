@@ -28,6 +28,7 @@ python main.py
 | 12 | [vllm](./vllm)                               | Self-hosted Qwen via vLLM — same motor, `VLLMAdapter` upstream.          |
 | 13 | [console](./console)                         | Interactive REPL — `motor.console()` with rich + prompt-toolkit.         |
 | 14 | [chat](./chat)                               | Multi-turn dialog — `motor.chat()` + `chat.send()` with memory.          |
+| 15 | [docker](./docker)                           | Containerized run — explicit `workspace_root` + volume for persistence.  |
 
 Every example uses the strict guardrail (the default), so the agent is
 sandboxed inside its per-run workspace from the first call.
