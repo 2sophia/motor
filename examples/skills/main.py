@@ -45,6 +45,9 @@ async def main() -> None:
         default_tools=["Skill", "Bash"],
         default_skills=SKILLS_DIR,
         default_max_turns=8,
+        # On so each turn ends up in <run>/audit/ — handy for inspecting
+        # which Skill the model chose and what it dispatched. Off in prod.
+        proxy_dump_payloads=True,
     ))
 
     prompts = [

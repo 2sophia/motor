@@ -3,8 +3,7 @@ FROM python:3.12-slim
 
 # Non-root user with an explicit HOME — pathlib's Path.home() falls back
 # on $HOME, and a UID without a /etc/passwd entry would otherwise crash
-# the SDK on first call. Even though we override workspace_root below,
-# leaving HOME well-defined keeps every internal Path.home() call safe.
+# the SDK on first call.
 RUN useradd -m -u 1000 -d /home/agent agent
 ENV HOME=/home/agent
 
@@ -17,8 +16,12 @@ RUN pip install --no-cache-dir sophia-motor
 
 COPY main.py /app/main.py
 
-# Mount target for audit dumps + trace files. Override workspace_root in
-# the Python config so runs land here instead of $HOME.
+# Override workspace_root via env so the same main.py works locally
+# (writes under $HOME) and in container (writes under /data).
+ENV SOPHIA_MOTOR_WORKSPACE_ROOT=/data/runs
+
+# Mount target for audit dumps + trace files. Without this volume, runs
+# vanish with the container.
 VOLUME ["/data"]
 RUN mkdir -p /data && chown agent:agent /data /app
 

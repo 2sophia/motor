@@ -448,6 +448,55 @@ Motor(MotorConfig(guardrail="off"))  # no hook (you take responsibility)
 
 ---
 
+## Debug mode
+
+The motor stays silent by default — no stdout, no audit dump, nothing
+written outside the per-run workspace. Production-shaped out of the
+box. When you want to **see** what's happening, flip on the two debug
+knobs.
+
+```bash
+# inline, single run
+SOPHIA_MOTOR_CONSOLE_LOG=true SOPHIA_MOTOR_AUDIT_DUMP=true python my_app.py
+```
+
+```python
+# or per Motor instance
+motor = Motor(MotorConfig(
+    console_log_enabled=True,
+    proxy_dump_payloads=True,
+))
+```
+
+`console_log_enabled` streams events as they happen — turn boundaries,
+tool calls, costs. `proxy_dump_payloads` persists every request and
+response body under `<run>/audit/` so you can grep what the model
+actually saw and produced.
+
+### Configuration cascade
+
+For every supported field, resolution order is:
+
+> **explicit `MotorConfig(...)` param  >  env var  >  hardcoded default**
+
+| Env var                       | Field                  | Default                  |
+|-------------------------------|------------------------|--------------------------|
+| `SOPHIA_MOTOR_MODEL`          | `model`                | `claude-opus-4-6`        |
+| `SOPHIA_MOTOR_WORKSPACE_ROOT` | `workspace_root`       | `~/.sophia-motor/runs`   |
+| `SOPHIA_MOTOR_PROXY_HOST`     | `proxy_host`           | `127.0.0.1`              |
+| `SOPHIA_MOTOR_CONSOLE_LOG`    | `console_log_enabled`  | `false`                  |
+| `SOPHIA_MOTOR_AUDIT_DUMP`     | `proxy_dump_payloads`  | `false`                  |
+
+Bool env vars accept `true`/`1`/`yes`/`on` (truthy) and
+`false`/`0`/`no`/`off` (falsy), case-insensitive. Anything else falls
+back to the hardcoded default — typo'd values never silently coerce.
+
+The cascade also reads `./.env` in the current working directory if a
+process env var isn't set, so a `pip install + Motor()` script can
+pick up local debug knobs without exporting anything.
+
+---
+
 ## Configuration reference
 
 ### `MotorConfig`
@@ -461,7 +510,8 @@ Settings on the motor instance — set once at construction.
 | `workspace_root`      | `Path`                              | `~/.sophia-motor/runs/`                 | Where per-run dirs are created. Must be outside any git repo / `pyproject.toml` ancestor |
 | `guardrail`           | `"strict" \| "permissive" \| "off"` | `"strict"`                              | Built-in PreToolUse hook (see *Guardrail* above)                                         |
 | `disable_claude_md`   | `bool`                              | `True`                                  | Skip auto-loading repo `CLAUDE.md` / `MEMORY.md` into the agent's context                |
-| `console_log_enabled` | `bool`                              | `True`                                  | Colored console logger for events (off for silent runs)                                  |
+| `console_log_enabled` | `bool`                              | `False`                                 | Colored console logger for events. Off by default — flip on for local debug              |
+| `proxy_dump_payloads` | `bool`                              | `False`                                 | Persist every request/response under `<run>/audit/`. Off by default — flip on for debug  |
 
 `MotorConfig` also exposes a set of `default_*` fields (`default_system`, `default_tools`, `default_skills`,
 `default_output_schema`, ...) so the same task settings can be set once on the motor and varied per `RunTask`. See the [

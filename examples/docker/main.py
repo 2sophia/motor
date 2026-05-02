@@ -1,10 +1,10 @@
 # Copyright (c) 2026 Sophia AI
 # SPDX-License-Identifier: MIT
-"""Docker example — explicit workspace_root pointed at a mounted volume.
+"""Docker example — same code as a local run; env decides where to write.
 
-The default `~/.sophia-motor/runs/` would die with the container.
-Pass an explicit `workspace_root` under a volume so audit dumps and
-trace files survive container restarts.
+The Dockerfile sets `SOPHIA_MOTOR_WORKSPACE_ROOT=/data/runs` so audit
+dumps and trace files land on a mounted volume. Locally you'd run the
+exact same `main.py` and it'd write under `~/.sophia-motor/runs/`.
 
 Run:
     docker compose up --build
@@ -18,15 +18,12 @@ Run:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
-from sophia_motor import Motor, MotorConfig, RunTask
+from sophia_motor import Motor, RunTask
 
 
 async def main() -> None:
-    motor = Motor(MotorConfig(
-        workspace_root=Path("/data/runs"),
-    ))
+    motor = Motor()  # workspace_root comes from SOPHIA_MOTOR_WORKSPACE_ROOT env
 
     result = await motor.run(RunTask(
         prompt="In one sentence: what's the difference between a process and a container?",
@@ -36,7 +33,7 @@ async def main() -> None:
     print("─" * 60)
     print(f"output:\n{result.output_text}")
     print("─" * 60)
-    print(f"runs persisted under: /data/runs/{result.metadata.run_id}/")
+    print(f"runs persisted under: {result.workspace_dir}")
     print(
         f"turns={result.metadata.n_turns}  "
         f"cost=${result.metadata.total_cost_usd:.4f}  "

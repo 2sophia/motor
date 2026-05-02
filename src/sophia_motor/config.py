@@ -11,32 +11,80 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-def _resolve_api_key() -> str:
-    """Resolve ANTHROPIC_API_KEY from (in order): env var → ./.env file.
-
-    Lightweight inline .env parser — avoids adding python-dotenv as dep.
-    Honors `KEY=value`, `KEY="value"`, `KEY='value'`. Skips comments and
-    blank lines. Returns "" if nothing is found; the Motor will then raise
-    a clear error at first .run() call.
-    """
-    if v := os.environ.get("ANTHROPIC_API_KEY"):
-        return v
+def _read_env_file(key: str) -> Optional[str]:
+    """Read `key` from `./.env` in cwd. Returns None if absent."""
     env_path = Path.cwd() / ".env"
     if not env_path.exists():
-        return ""
+        return None
     try:
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
+            if not line or line.startswith("#") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
-            if k.strip() == "ANTHROPIC_API_KEY":
+            if k.strip() == key:
                 return v.strip().strip('"').strip("'")
     except OSError:
         pass
-    return ""
+    return None
+
+
+def _env_str(key: str) -> Optional[str]:
+    """Resolution cascade: process env var → ./.env file → None."""
+    if v := os.environ.get(key):
+        return v
+    return _read_env_file(key)
+
+
+def _env_bool(key: str) -> Optional[bool]:
+    """Parse a bool env var. `true/1/yes/on` → True, `false/0/no/off` → False.
+
+    Returns None if unset (caller falls back to its hardcoded default).
+    Anything else also falls back to None — be lenient on input, conservative
+    on dispatch, never silently coerce typo'd values.
+    """
+    raw = _env_str(key)
+    if raw is None:
+        return None
+    v = raw.strip().lower()
+    if v in ("true", "1", "yes", "on"):
+        return True
+    if v in ("false", "0", "no", "off"):
+        return False
+    return None
+
+
+def _resolve_api_key() -> str:
+    """Resolve ANTHROPIC_API_KEY from (in order): env var → ./.env file.
+
+    Returns "" if nothing is found; the Motor will then raise a clear
+    error at first .run() call.
+    """
+    return _env_str("ANTHROPIC_API_KEY") or ""
+
+
+def _resolve_workspace_root() -> Path:
+    if v := _env_str("SOPHIA_MOTOR_WORKSPACE_ROOT"):
+        return Path(v).expanduser().resolve()
+    return (Path.home() / ".sophia-motor" / "runs").resolve()
+
+
+def _resolve_model() -> str:
+    return _env_str("SOPHIA_MOTOR_MODEL") or "claude-opus-4-6"
+
+
+def _resolve_proxy_host() -> str:
+    return _env_str("SOPHIA_MOTOR_PROXY_HOST") or "127.0.0.1"
+
+
+def _resolve_console_log() -> bool:
+    v = _env_bool("SOPHIA_MOTOR_CONSOLE_LOG")
+    return False if v is None else v
+
+
+def _resolve_audit_dump() -> bool:
+    v = _env_bool("SOPHIA_MOTOR_AUDIT_DUMP")
+    return False if v is None else v
 
 
 # Tool description overrides applied at proxy layer.
@@ -115,8 +163,12 @@ class MotorConfig(BaseModel):
         ),
     )
     model: str = Field(
-        default="claude-opus-4-6",
-        description="Default model id used by the SDK and forwarded to upstream.",
+        default_factory=_resolve_model,
+        description=(
+            "Default model id used by the SDK and forwarded to upstream. "
+            "Resolution cascade: explicit param > SOPHIA_MOTOR_MODEL env "
+            "var > 'claude-opus-4-6'."
+        ),
     )
     upstream_base_url: str = Field(
         default="https://api.anthropic.com",
@@ -139,9 +191,10 @@ class MotorConfig(BaseModel):
 
     # ── Workspace ────────────────────────────────────────────────────
     workspace_root: Path = Field(
-        default_factory=lambda: Path.home() / ".sophia-motor" / "runs",
+        default_factory=_resolve_workspace_root,
         description=(
-            "Root directory for per-run workspaces. Default "
+            "Root directory for per-run workspaces. Resolution cascade: "
+            "explicit param > SOPHIA_MOTOR_WORKSPACE_ROOT env var > "
             "`~/.sophia-motor/runs/` — outside any repo, always safe.\n\n"
             "MUST be a directory whose ancestors do NOT contain `.git/`, "
             "`pyproject.toml`, or `package.json`. The bundled Claude CLI "
@@ -165,7 +218,13 @@ class MotorConfig(BaseModel):
             "only for unit tests that mock the SDK."
         ),
     )
-    proxy_host: str = "127.0.0.1"
+    proxy_host: str = Field(
+        default_factory=_resolve_proxy_host,
+        description=(
+            "Bind host for the local proxy. Resolution cascade: explicit "
+            "param > SOPHIA_MOTOR_PROXY_HOST env var > '127.0.0.1'."
+        ),
+    )
     proxy_port: int | None = Field(
         default=None,
         description=(
@@ -176,8 +235,14 @@ class MotorConfig(BaseModel):
         ),
     )
     proxy_dump_payloads: bool = Field(
-        default=True,
-        description="Persist every request and response body under <run>/audit/.",
+        default_factory=_resolve_audit_dump,
+        description=(
+            "Persist every request and response body under <run>/audit/. "
+            "Resolution cascade: explicit param > SOPHIA_MOTOR_AUDIT_DUMP "
+            "env var > False. Default OFF: in production you want clean "
+            "disk writes; flip on in dev (or via env) when you want to "
+            "inspect what the SDK and the model actually exchanged."
+        ),
     )
     proxy_strip_sdk_noise: bool = Field(
         default=True,
@@ -238,8 +303,14 @@ class MotorConfig(BaseModel):
 
     # ── Logging ──────────────────────────────────────────────────────
     console_log_enabled: bool = Field(
-        default=True,
-        description="Register the default console logger for events and logs.",
+        default_factory=_resolve_console_log,
+        description=(
+            "Register the default console logger for events and logs. "
+            "Resolution cascade: explicit param > SOPHIA_MOTOR_CONSOLE_LOG "
+            "env var > False. Default OFF so the motor stays silent in "
+            "production; flip on in dev (or via env) when you want to "
+            "watch turns scroll by."
+        ),
     )
 
     # ── CLI flags ────────────────────────────────────────────────────

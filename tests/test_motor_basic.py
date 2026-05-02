@@ -54,6 +54,7 @@ async def test_motor_runs_simple_read_task(api_key, tmp_path):
         api_key=api_key,
         workspace_root=tmp_path,
         console_log_enabled=False,
+        proxy_dump_payloads=True,  # this test asserts on audit files
     )
     events_seen: list[str] = []
 

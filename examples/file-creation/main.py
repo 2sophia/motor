@@ -60,7 +60,9 @@ def _w(s: str) -> None:
 
 
 async def main() -> None:
-    motor = Motor(MotorConfig(console_log_enabled=False))
+    # proxy_dump_payloads=True so the audit trail under <run>/audit/ keeps
+    # the full request/response of every Write call. Off by default in prod.
+    motor = Motor(MotorConfig(proxy_dump_payloads=True))
 
     task = RunTask(
         prompt=(

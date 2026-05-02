@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from sophia_motor import Motor, RunTask
+from sophia_motor import Motor, MotorConfig, RunTask
 
 
 # Directory bundled with this example. Drop additional PDFs / .md / .txt
@@ -33,7 +33,9 @@ FILES_DIR = Path(__file__).parent / "files"
 
 
 async def main() -> None:
-    motor = Motor()
+    # proxy_dump_payloads=True so you can inspect what the model actually
+    # read from each attachment under <run>/audit/. Off by default in prod.
+    motor = Motor(MotorConfig(proxy_dump_payloads=True))
 
     result = await motor.run(RunTask(
         prompt=(

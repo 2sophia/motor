@@ -1,18 +1,31 @@
 # docker
 
-Run sophia-motor inside a container with audit dumps that **survive
-restarts**. Two gotchas covered:
+Same `main.py` you'd run locally — the Dockerfile flips the workspace
+root via env so audit dumps + trace files land on a mounted volume
+instead of inside the container's ephemeral filesystem.
 
-1. **`~/.sophia-motor/runs/` dies with the container** unless you mount
-   a volume. Override `workspace_root` to a path under that volume.
-2. **`Path.home()` can crash** for ad-hoc UIDs without a `/etc/passwd`
-   entry. The Dockerfile creates a real user (`agent`, UID 1000) and
-   sets `HOME` explicitly.
+## The pattern
+
+```python
+from sophia_motor import Motor, RunTask
+
+motor = Motor()  # picks up SOPHIA_MOTOR_WORKSPACE_ROOT from env if set
+```
+
+```dockerfile
+ENV SOPHIA_MOTOR_WORKSPACE_ROOT=/data/runs
+VOLUME ["/data"]
+```
+
+Locally `Motor()` writes under `~/.sophia-motor/runs/`. In the
+container, the env override redirects it to `/data/runs/`, which is
+the mount point for the host volume. **No code change between
+environments**.
 
 ## Files
 
-- `main.py` — minimal run with `MotorConfig(workspace_root=Path("/data/runs"))`
-- `Dockerfile` — `python:3.12-slim` + non-root user + `VOLUME /data`
+- `main.py` — plain `Motor()` run, no path hardcoded
+- `Dockerfile` — `python:3.12-slim` + non-root user with `HOME` set + `ENV SOPHIA_MOTOR_WORKSPACE_ROOT`
 - `docker-compose.yml` — wires the host folder `./data` to `/data` in the container
 
 ## Run with docker compose
@@ -23,7 +36,8 @@ docker compose up --build
 ```
 
 After the run, audit dumps and trace files are on the host under
-`./data/runs/<run_id>/` — inspect, archive, or grep them like any local file.
+`./data/runs/<run_id>/` — inspect, archive, or grep them like any
+local file.
 
 ## Run with plain docker
 
@@ -36,22 +50,35 @@ docker run --rm \
   sophia-motor-demo
 ```
 
+## Two gotchas covered
+
+1. **`Path.home()` can crash** for ad-hoc UIDs without a `/etc/passwd`
+   entry. The Dockerfile creates a real user (`agent`, UID 1000) and
+   sets `HOME` explicitly.
+2. **`~/.sophia-motor/runs/` dies with the container** unless the
+   volume is mounted. The `VOLUME ["/data"]` declaration + the
+   workspace env override solve that.
+
 ## Multi-arch
 
-`pip install sophia-motor` pulls the right wheel for the build platform
-automatically — both `linux/amd64` and `linux/arm64` are supported by
-the upstream Claude Agent SDK. No extra config needed on Apple Silicon
-or AWS Graviton.
+`pip install sophia-motor` pulls the right wheel for the build
+platform automatically — both `linux/amd64` and `linux/arm64` are
+supported by the upstream Claude Agent SDK. No extra config needed on
+Apple Silicon or AWS Graviton.
 
-## What to override in production
+## Production knobs (env vars)
 
-- `workspace_root` — point it at a persistent volume (Kubernetes PVC,
-  EFS, host bind-mount, …). The default `~/.sophia-motor/runs/` is not
-  what you want once the process is ephemeral.
-- `proxy_dump_payloads` — leave on (default) for audit; flip off only
-  if disk pressure is real and you don't need request/response bodies.
-- `console_log_enabled` — flip off in production; structured logs go
-  through `motor.events` / `motor.logs` and are easier to ingest.
+| Env var                       | What it does                          | Default       |
+|-------------------------------|---------------------------------------|---------------|
+| `SOPHIA_MOTOR_WORKSPACE_ROOT` | Where runs are persisted              | `~/.sophia-motor/runs` |
+| `SOPHIA_MOTOR_MODEL`          | Default model id                      | `claude-opus-4-6` |
+| `SOPHIA_MOTOR_CONSOLE_LOG`    | Stream events to stdout               | `false` |
+| `SOPHIA_MOTOR_AUDIT_DUMP`     | Write request/response bodies to disk | `false` |
+
+`SOPHIA_MOTOR_CONSOLE_LOG` and `SOPHIA_MOTOR_AUDIT_DUMP` are off by
+default so production stays clean (no stdout noise, no disk pressure).
+Flip them on for local debugging or attach a debug profile to a
+container.
 
 ## What NOT to put in the image
 
