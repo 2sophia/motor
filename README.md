@@ -451,12 +451,13 @@ let the framework drive concurrency.
 A `PreToolUse` hook is wired in by default. It runs **before** every tool call and refuses unsafe ones, returning the
 reason as feedback so the agent can self-correct.
 
-> ⚠️ **Alpha software.** A built-in `strict` guardrail is **on by default** — the agent's `Read`/`Edit`/`Glob`/`Grep`
+> ⚠️ **Alpha software, lexical guard.** A built-in `strict` guardrail is **on by default** — the agent's `Read`/`Edit`/`Glob`/`Grep`
 > are confined to the workspace, `Write` is restricted to `outputs/`, and `Bash` blocks dev/admin commands (`curl`,
-`wget`, `ssh`, `git`, `docker`, `pip`, `npm`, `sudo`, ...) plus `..` escapes, `/dev/tcp`, `bash -c`, `eval`/`exec`
-> patterns. This is the **first layer**, not the last. Audit dump, rate limits, content filtering, and a managed-sandbox
-> runtime are in active development. **Don't point it at production secrets or fully untrusted prompts without your own
-hardening on top** — yet.
+> `wget`, `ssh`, `git`, `docker`, `pip`, `npm`, `sudo`, ...) plus `..` escapes, `/dev/tcp`, `bash -c`, `eval`/`exec`
+> patterns and a strict-mode Python invocation parser. This is the **first line of defense**, not the only one — it
+> catches common LLM mistakes and naïve prompt injection by lexical match, not formal sandboxing. **For real production
+> use, layer OS-level isolation underneath** (container, non-privileged user, read-only filesystem, capability drop,
+> egress allowlist) — see [Production hardening](#production-hardening--the-guard-is-first-line-not-the-line) below.
 
 ```python
 Motor(MotorConfig(guardrail="strict"))  # default — safe by default
@@ -535,13 +536,48 @@ has signed off on trusted-tool tier and any `python` call is fine
 - **Determined evasion** via heavy obfuscation (custom encoding +
   `compile()` chains, ctype tricks via skills, etc.) is still
   possible. The guard defeats the common prompt-injection and
-  honest-mistake cases — it is not a formal sandbox. For higher
-  assurance run as non-privileged OS user with read-only FS.
+  honest-mistake cases — it is not a formal sandbox.
+- **Other interpreters** beyond Python (`lua`, `tcl`, `julia`, `R`,
+  `php -r`, `awk 'BEGIN{system(...)}'`, `sed 'e ...'`, future runtimes)
+  are not all individually parsed. The blocklist catches the common
+  ones (`node`, `ruby`, `perl`, `pwsh`); rare/exotic interpreters can
+  slip through if you make them available in `PATH`. The guard is a
+  **lexical first filter**, not an exhaustive runtime registry.
 
-For higher assurance: run the motor as a **non-privileged OS user**
-with no access to your dev `$HOME`, ideally inside a container with
-read-only FS except `/data`. The guard is the first line, the OS is
-the last.
+### Production hardening — the guard is **first line**, not the line
+
+The strict guard catches the common LLM mistake and the naïve prompt-
+injection. It is **not** a sandbox you can rely on alone. For anything
+that touches real users or real secrets, layer OS-level isolation
+underneath:
+
+```
+Container (Docker, k8s, Firecracker, ...)
+  └─ non-privileged user (UID ≥ 1000), no sudo, no setuid bits
+     └─ read-only filesystem, except /data (volume) and /tmp (tmpfs)
+        └─ no outbound network (or NetworkPolicy / iptables egress allowlist)
+           └─ dropped Linux capabilities (--cap-drop=ALL, then add only what's needed)
+              └─ resource limits (--memory, --cpus, --pids-limit)
+                 └─ then the motor with guardrail="strict"
+```
+
+Each layer covers a different threat:
+
+| Layer | What it stops | Without it... |
+|---|---|---|
+| Non-priv user | `sudo`, `chmod` on system files, mount, kill other processes | guard's `sudo` block isn't enough — root can still escape |
+| Read-only FS | `Write`/`shutil.rmtree` on system paths, planted persistent files | guard restricts `Write` to `outputs/` but a bug = host damage |
+| No outbound network | Exfiltration of secrets the env strip didn't catch | env strip is best-effort, network gate is binary |
+| Dropped capabilities | `mount`, `setuid`, raw socket | `CAP_NET_RAW` would let the agent skip our network gate |
+| Resource limits | Fork bombs, CPU/memory exhaustion DoS | the guard doesn't measure resource usage |
+
+For an `examples/docker/` starting point with most of these baked in,
+see [examples/docker/](./examples/docker/). For Kubernetes, the same
+shape with a `securityContext` (`runAsNonRoot`, `readOnlyRootFilesystem`,
+`capabilities.drop: [ALL]`) and a `NetworkPolicy` denying egress.
+
+The guard saves you from the easy 95%. The OS layer is what keeps the
+remaining 5% from blowing up. **Use both — you need both.**
 
 ---
 
