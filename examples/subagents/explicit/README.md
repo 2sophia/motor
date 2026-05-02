@@ -12,8 +12,7 @@ automatic routing and guarantee the delegation. Useful for:
 ```python
 motor = Motor(MotorConfig(
     default_agents={"security-reviewer": AgentDefinition(...)},
-    default_tools=["Read", "Agent"],
-    default_disallowed_tools=[],
+    default_tools=["Read", "Agent"],   # whitelisting Agent in tools is enough
 ))
 
 await motor.run(RunTask(

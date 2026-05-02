@@ -13,7 +13,6 @@ returns to the parent.
 motor = Motor(MotorConfig(
     # No `default_agents={...}` — just expose the Agent tool.
     default_tools=["Read", "Glob", "Grep", "Agent"],
-    default_disallowed_tools=[],
 ))
 
 await motor.run(RunTask(
