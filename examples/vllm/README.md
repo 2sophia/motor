@@ -19,10 +19,10 @@ export ANTHROPIC_API_KEY=local           # any non-empty string for unauth'd vLL
 
 ```python
 import asyncio
-from sophia_motor import Motor, MotorConfig, RunTask
+from sophia_motor import Motor, RunTask
 
 async def main():
-    motor = Motor(MotorConfig())          # all four read from env
+    motor = Motor()                       # all four read from env
     result = await motor.run(RunTask(
         prompt="Why do open-weight LLMs matter? Two sentences.",
     ))

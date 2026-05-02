@@ -23,14 +23,14 @@ from __future__ import annotations
 
 import asyncio
 
-from sophia_motor import Motor, MotorConfig, RunTask
+from sophia_motor import Motor, RunTask
 
 
 async def main() -> None:
-    # MotorConfig() with no args — every field reads from env via the
-    # SOPHIA_MOTOR_* cascade. Override any of them inline if you want
-    # a one-off run against a different upstream.
-    motor = Motor(MotorConfig())
+    # No args — every MotorConfig field reads from env via the
+    # SOPHIA_MOTOR_* cascade. Pass an explicit MotorConfig(...) only
+    # when you want to override a field inline.
+    motor = Motor()
 
     # ── Advanced: explicit VLLMAdapter ────────────────────────────────
     # When the `vllm` preset isn't enough (sampling tuning, max_tokens
