@@ -31,6 +31,7 @@ from ._chunks import (
     ToolUseStartChunk,
 )
 from ._models import OutputFile, RunMetadata, RunResult, RunTask
+from ._python_tools import ToolContext, ToolMeta, tool
 from .cleanup import clean_runs
 from .config import MotorConfig
 from .events import (
@@ -81,4 +82,8 @@ __all__ = [
     "Chat",
     # subagents (re-exported from claude-agent-sdk for ergonomics)
     "AgentDefinition",
+    # python tools — @tool decorator + ToolContext for in-process MCP
+    "tool",
+    "ToolContext",
+    "ToolMeta",
 ]

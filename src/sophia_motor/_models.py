@@ -99,7 +99,10 @@ class RunTask:
     """
     prompt: str
     system: Optional[str] = None
-    tools: Optional[list[str]] = None
+    # tools accepts a heterogeneous list: str entries are built-in CLI
+    # tool names, callables are @tool-decorated Python functions mounted
+    # as in-process MCP and exposed as `mcp__sophia__<name>`.
+    tools: Optional[list[Any]] = None
     allowed_tools: Optional[list[str]] = None
     disallowed_tools: Optional[list[str]] = None
     max_turns: Optional[int] = None

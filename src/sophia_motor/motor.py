@@ -82,6 +82,14 @@ from .events import (
     default_console_logger,
 )
 from .proxy import ProxyServer
+from ._python_tools import (
+    DEFAULT_SERVER_NAME as _PYTOOLS_SERVER,
+    ToolMeta,
+    compile_python_tools,
+    normalize_run_tools,
+    serialize_tools_list,
+    tool as _python_tool,
+)
 
 
 @dataclass
@@ -106,7 +114,16 @@ class Motor:
     Subscriber registration:
         motor.on_event(fn)  # decorator or direct call
         motor.on_log(fn)
+
+    Python tool decorator (alias of `sophia_motor.tool`):
+        @Motor.tool
+        async def my_tool(args: MyInput) -> MyOutput: ...
     """
+
+    # Namespaced alias for `sophia_motor.tool`. Available without an
+    # instance so callers can decorate at module top-level before the
+    # Motor is constructed:  @Motor.tool  ↔  @tool
+    tool = staticmethod(_python_tool)
 
     def __init__(self, config: Optional[MotorConfig] = None) -> None:
         self.config = config or MotorConfig()
@@ -873,7 +890,9 @@ class Motor:
             "task": {
                 "prompt": task.prompt,
                 "system": task.system,
-                "tools": task.tools,
+                # tools may contain @tool callables; render as readable
+                # `mcp__sophia__<name>` strings for the audit log.
+                "tools": serialize_tools_list(task.tools),
                 "allowed_tools": task.allowed_tools,
                 "disallowed_tools": task.disallowed_tools,
                 "max_turns": task.max_turns or self.config.default_max_turns,
@@ -985,6 +1004,37 @@ class Motor:
             env["ANTHROPIC_BASE_URL"] = self._proxy.base_url_for_run(run_id)
             env["ANTHROPIC_AUTH_TOKEN"] = api_key
 
+        # Single sweep across task.tools + agents — collect every Python
+        # callable referenced anywhere in this run, dedupe by meta.name,
+        # validate, compile into ONE in-process MCP server, and produce
+        # parent + agent tool lists with callables rewritten to
+        # `mcp__sophia__<name>`. From here on the motor talks pure
+        # SDK-style strings; the heterogeneous str|callable entry point
+        # is fully behind us.
+        all_metas, parent_tools, normalized_agents = normalize_run_tools(
+            task.tools, task.agents,
+        )
+
+        audit_dir = agent_cwd.parent / "audit"
+        py_mcp_server, _ = compile_python_tools(
+            all_metas,
+            run_id=run_id,
+            audit_dir=audit_dir,
+            agent_cwd=agent_cwd,
+            event_bus=self.events,
+            server_name=_PYTOOLS_SERVER,
+            dump_audit=self.config.proxy_dump_payloads,
+        )
+
+        # `tool_strings` retains the str-only view of the parent (used by
+        # the disallowed_tools conflict resolution + the subagent gating
+        # below). It's the str entries from the original `task.tools`,
+        # not the prefixed callables.
+        tool_strings = (
+            None if parent_tools is None
+            else [t for t in parent_tools if not t.startswith(f"mcp__{_PYTOOLS_SERVER}__")]
+        )
+
         # Resolve disallowed_tools: explicit None on the task → config default.
         # Explicit empty list [] on the task → run truly unblocked (escape hatch
         # for tests). Otherwise use what the task provides.
@@ -998,8 +1048,8 @@ class Motor:
         # set so the SDK doesn't expose-and-then-block it (which would
         # waste tokens and surprise the model). The block list still
         # protects every tool the caller did NOT opt into.
-        if task.tools:
-            disallowed = [t for t in disallowed if t not in task.tools]
+        if tool_strings:
+            disallowed = [t for t in disallowed if t not in tool_strings]
 
         # `tools` (hard whitelist) only set when explicitly provided.
         # SDK signature: list[str] | ToolsPreset | None. Pass-through.
@@ -1019,8 +1069,12 @@ class Motor:
             # for `motor.run(task)` which collects.
             "include_partial_messages": True,
         }
-        if task.tools is not None:
-            sdk_kwargs["tools"] = task.tools
+        if parent_tools is not None:
+            sdk_kwargs["tools"] = list(parent_tools)
+
+        # Mount the in-process MCP server hosting the Python tools.
+        if py_mcp_server is not None:
+            sdk_kwargs["mcp_servers"] = {_PYTOOLS_SERVER: py_mcp_server}
 
         # Subagents — by-design opt-in. If the caller asked for subagents
         # via task.agents (or MotorConfig.default_agents), the `Agent` tool
@@ -1028,7 +1082,7 @@ class Motor:
         # is given) and absent from `disallowed_tools`. We refuse to silently
         # auto-fix the toolset — the dev declares what the agent can do.
         if task.agents:
-            agent_in_tools = task.tools is None or "Agent" in task.tools
+            agent_in_tools = tool_strings is None or "Agent" in tool_strings
             agent_blocked = "Agent" in disallowed
             if not agent_in_tools or agent_blocked:
                 missing = []
@@ -1045,7 +1099,10 @@ class Motor:
                     "enable subagents: " + "; ".join(missing) + ". "
                     "See examples/subagents/ for the canonical setup."
                 )
-            sdk_kwargs["agents"] = task.agents
+            # Pass the agents view with @tool callables already rewritten
+            # to `mcp__sophia__<name>`. Untouched if the dev declared
+            # `tools=None` (inheritance) or only used strings.
+            sdk_kwargs["agents"] = normalized_agents
 
         # Resume an existing SDK session (chat-style multi-turn). The CLI
         # replays the prior conversation history before processing the new
