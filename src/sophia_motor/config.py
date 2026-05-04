@@ -296,6 +296,22 @@ class MotorConfig(BaseModel):
     )
 
     # ── Security guardrail (PreToolUse hook) ─────────────────────────
+    custom_pre_tool_hooks: list[Any] = Field(
+        default_factory=list,
+        description=(
+            "Extra PreToolUse hook callbacks composed alongside the "
+            "built-in `guardrail` hook (strict/permissive). Each entry "
+            "is an `async def hook(input_data, tool_use_id, context) -> "
+            "dict` matching the claude-agent-sdk HookCallback signature. "
+            "Return `Allow()` (`{}`) to let the call through, or "
+            "`Deny(reason='...')` to block — both helpers are exported "
+            "from `sophia_motor`. Hooks run AFTER the built-in guard; "
+            "any single deny wins (logical AND of allow). Use this slot "
+            "for project-specific bans (e.g. \"block reads outside the "
+            "knowledge-base attachment dir\", \"deny Bash on a model "
+            "registry path\") without forking the motor."
+        ),
+    )
     guardrail: str = Field(
         default="strict",
         description=(

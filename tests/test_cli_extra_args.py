@@ -46,6 +46,76 @@ def test_no_session_persistence_on_by_default(tmp_path: Path) -> None:
     assert args["no-session-persistence"] is None
 
 
+def test_custom_pre_tool_hooks_composed_with_built_in(tmp_path: Path) -> None:
+    """Custom hooks land in the same PreToolUse HookMatcher as the
+    built-in guard — order: built-in first, then user hooks."""
+    async def my_hook(input_data, tool_use_id, context):
+        return {}
+
+    motor = Motor(MotorConfig(
+        api_key="dummy",
+        workspace_root=tmp_path,
+        console_log_enabled=False,
+        custom_pre_tool_hooks=[my_hook],
+    ))
+    opts = motor._build_sdk_options(
+        RunTask(prompt="x"),
+        agent_cwd=tmp_path / "agent",
+        claude_dir=tmp_path / ".claude",
+        api_key="dummy",
+        run_id="run-test",
+    )
+    pretool = opts.hooks["PreToolUse"]
+    assert len(pretool) == 1  # one HookMatcher
+    matcher_hooks = pretool[0].hooks
+    # built-in guard (strict default) + my_hook
+    assert len(matcher_hooks) == 2
+    assert matcher_hooks[1] is my_hook  # user hook is last (after built-in)
+
+
+def test_custom_pre_tool_hooks_alone_when_guardrail_off(tmp_path: Path) -> None:
+    """With `guardrail='off'` only the user hooks run — the built-in is
+    fully removed, no zombie matcher with an empty hooks list."""
+    async def my_hook(input_data, tool_use_id, context):
+        return {}
+
+    motor = Motor(MotorConfig(
+        api_key="dummy",
+        workspace_root=tmp_path,
+        console_log_enabled=False,
+        guardrail="off",
+        custom_pre_tool_hooks=[my_hook],
+    ))
+    opts = motor._build_sdk_options(
+        RunTask(prompt="x"),
+        agent_cwd=tmp_path / "agent",
+        claude_dir=tmp_path / ".claude",
+        api_key="dummy",
+        run_id="run-test",
+    )
+    pretool = opts.hooks["PreToolUse"]
+    matcher_hooks = pretool[0].hooks
+    assert matcher_hooks == [my_hook]
+
+
+def test_no_hooks_block_when_off_and_no_custom(tmp_path: Path) -> None:
+    """`guardrail='off'` + no custom hooks → no PreToolUse block at all."""
+    motor = Motor(MotorConfig(
+        api_key="dummy",
+        workspace_root=tmp_path,
+        console_log_enabled=False,
+        guardrail="off",
+    ))
+    opts = motor._build_sdk_options(
+        RunTask(prompt="x"),
+        agent_cwd=tmp_path / "agent",
+        claude_dir=tmp_path / ".claude",
+        api_key="dummy",
+        run_id="run-test",
+    )
+    assert not opts.hooks or "PreToolUse" not in opts.hooks
+
+
 def test_chat_mode_skips_strict_mcp_config(tmp_path: Path) -> None:
     """chat-mode runs reuse caller-managed workspace; ambient MCP discovery
     is the caller's responsibility, so the motor doesn't override it."""

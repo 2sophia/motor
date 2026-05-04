@@ -1137,11 +1137,21 @@ class Motor:
         # Built-in PreToolUse hook — sandbox the agent based on config.guardrail.
         # The hook matches on every tool name (matcher=None catches all) and
         # delegates the per-tool checks to make_guard_hook. Setting
-        # guardrail='off' returns None and we skip the hooks block entirely.
+        # guardrail='off' returns None and we drop the built-in hook —
+        # custom hooks are still composed in below.
+        pretool_hooks: list = []
         guard_hook = make_guard_hook(self.config.guardrail)  # type: ignore[arg-type]
         if guard_hook is not None:
+            pretool_hooks.append(guard_hook)
+        # User-supplied PreToolUse hooks run AFTER the built-in guard.
+        # The SDK runs all hooks in the matcher block; any single deny
+        # wins (logical AND of allow). Order matters only for log /
+        # observability — the built-in guard's BLOCKED warning fires
+        # first, which is what you want when debugging deny chains.
+        pretool_hooks.extend(self.config.custom_pre_tool_hooks)
+        if pretool_hooks:
             sdk_kwargs["hooks"] = {
-                "PreToolUse": [HookMatcher(hooks=[guard_hook])],
+                "PreToolUse": [HookMatcher(hooks=pretool_hooks)],
             }
 
         # extra_args: arbitrary CLI flags forwarded to the Claude Code CLI

@@ -31,6 +31,7 @@ python main.py
 | 15 | [docker](./docker)                           | Containerized run — explicit `workspace_root` + volume for persistence.  |
 | 16 | [subagents](./subagents)                     | Spawn specialist subagents in isolated contexts — declarative or explicit invocation by name. |
 | 17 | [python-tools](./python-tools)               | Decorate a Python function with `@tool`, pass it in `default_tools` — schema from Pydantic, audit dump per call. Includes a subagent variant. |
+| 18 | [custom-guard](./custom-guard)               | Bolt project-specific deny rules onto the strict guardrail — `Allow()` / `Deny(reason)` helpers + `MotorConfig.custom_pre_tool_hooks`. |
 
 Every example uses the strict guardrail (the default), so the agent is
 sandboxed inside its per-run workspace from the first call.
