@@ -99,6 +99,18 @@ v = await motor.run(RunTask(...))  # ← right away
 For long-running services (FastAPI, Celery), instance the motor once and call `await motor.stop()` on shutdown.
 Single-shot scripts? Don't worry about it — the process death cleans up.
 
+### Claude Code skill (optional)
+
+If you use [Claude Code](https://docs.claude.com/en/docs/claude-code/) as your dev environment, install the companion skill so your local Claude knows how to write `sophia-motor` code correctly:
+
+```bash
+npm install -g @2sophia/sophia-motor-skill
+SKILL_DIR=$(npm root -g)/@2sophia/sophia-motor-skill
+mkdir -p ~/.claude/skills && ln -s "$SKILL_DIR" ~/.claude/skills/sophia-motor
+```
+
+The skill teaches conventions, golden rules, and decision trees. Source lives in [`skill/`](./skill/).
+
 ---
 
 ## What it gives you
