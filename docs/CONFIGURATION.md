@@ -13,16 +13,17 @@ order is:
 
 > **explicit `MotorConfig(...)` param  >  process env var  >  `./.env` file in cwd  >  hardcoded default**
 
-| Env var                       | Field                  | Default                    |
-|-------------------------------|------------------------|----------------------------|
-| `ANTHROPIC_API_KEY`           | `api_key`              | (required)                 |
-| `SOPHIA_MOTOR_MODEL`          | `model`                | `claude-opus-4-6`          |
-| `SOPHIA_MOTOR_BASE_URL`       | `upstream_base_url`    | `https://api.anthropic.com`|
-| `SOPHIA_MOTOR_ADAPTER`        | `upstream_adapter`     | `anthropic`                |
-| `SOPHIA_MOTOR_WORKSPACE_ROOT` | `workspace_root`       | `~/.sophia-motor/runs`     |
-| `SOPHIA_MOTOR_PROXY_HOST`     | `proxy_host`           | `127.0.0.1`                |
-| `SOPHIA_MOTOR_CONSOLE_LOG`    | `console_log_enabled`  | `false`                    |
-| `SOPHIA_MOTOR_AUDIT_DUMP`     | `proxy_dump_payloads`  | `false`                    |
+| Env var                              | Field                    | Default                                      |
+|--------------------------------------|--------------------------|----------------------------------------------|
+| `ANTHROPIC_API_KEY`                  | `api_key`                | (required)                                   |
+| `SOPHIA_MOTOR_MODEL`                 | `model`                  | `claude-opus-4-6`                            |
+| `SOPHIA_MOTOR_BASE_URL`              | `upstream_base_url`      | `https://api.anthropic.com`                  |
+| `SOPHIA_MOTOR_ADAPTER`               | `upstream_adapter`       | `anthropic`                                  |
+| `SOPHIA_MOTOR_WORKSPACE_ROOT`        | `workspace_root`         | `<tempdir>/sophia-motor/runs` (e.g. `/tmp/sophia-motor/runs/` on Linux) |
+| `SOPHIA_MOTOR_PROXY_HOST`            | `proxy_host`             | `127.0.0.1`                                  |
+| `SOPHIA_MOTOR_CONSOLE_LOG`           | `console_log_enabled`    | `false`                                      |
+| `SOPHIA_MOTOR_AUDIT_DUMP`            | `proxy_dump_payloads`    | `false`                                      |
+| `SOPHIA_MOTOR_PERSIST_RUN_METADATA`  | `persist_run_metadata`   | `false`                                      |
 
 Bool env vars accept `true`/`1`/`yes`/`on` (truthy) and
 `false`/`0`/`no`/`off` (falsy), case-insensitive. Anything else falls
@@ -56,30 +57,57 @@ through a firewall.
 
 ---
 
-## Debug mode
+## Workspace — ephemeral by default
 
-The motor stays silent by default — no stdout, no audit dump, nothing
-written outside the per-run workspace. Production-shaped out of the
-box. When you want to **see** what's happening, flip on the two debug
-knobs.
+`workspace_root` defaults to `<tempfile.gettempdir()>/sophia-motor/runs/` (e.g. `/tmp/sophia-motor/runs/` on Linux). The OS sweeps it on its own schedule — `systemd-tmpfiles` removes entries older than ~10 days on most Linux distros, macOS clears `/private/tmp/` at reboot, Windows runs cyclic temp cleanup. **Motor was built as a fire-and-forget intelligent function; the storage isn't a developer concern.**
+
+For persistence (audit retention, compliance, debug post-mortems), opt in explicitly:
+
+```python
+# Persistent under your home dir — outside any repo
+Motor(MotorConfig(workspace_root=Path("~/.sophia-motor/runs").expanduser()))
+
+# Containerised — point at a mounted volume
+Motor(MotorConfig(workspace_root="/data/runs"))
+```
 
 ```bash
-# inline, single run
-SOPHIA_MOTOR_CONSOLE_LOG=true SOPHIA_MOTOR_AUDIT_DUMP=true python my_app.py
+# Or via env, once per shell / process
+export SOPHIA_MOTOR_WORKSPACE_ROOT=~/.sophia-motor/runs
+```
+
+`MotorConfig.workspace_root` MUST be a directory whose ancestors do NOT contain `.git/`, `pyproject.toml`, or `package.json`. The bundled Claude CLI does upward project-root discovery and would otherwise re-path session/backup state into a deeply-nested fallback. The default tempdir is always safe.
+
+---
+
+## Debug mode
+
+The motor stays silent by default — no stdout, no audit dump, no `input.json`/`trace.json`, nothing written outside the per-run workspace beyond what the agent itself produces. Production-shaped out of the box. When you want to **see** what's happening, flip on the relevant debug knobs.
+
+```bash
+# inline, single run — full transparency
+SOPHIA_MOTOR_CONSOLE_LOG=true \
+SOPHIA_MOTOR_AUDIT_DUMP=true \
+SOPHIA_MOTOR_PERSIST_RUN_METADATA=true \
+python my_app.py
 ```
 
 ```python
 # or per Motor instance
 motor = Motor(MotorConfig(
-    console_log_enabled=True,
-    proxy_dump_payloads=True,
+    console_log_enabled=True,        # event stream to stdout
+    proxy_dump_payloads=True,        # request/response bodies under <run>/audit/
+    persist_run_metadata=True,       # input.json + trace.json under <run>/
 ))
 ```
 
-`console_log_enabled` streams events as they happen — turn boundaries,
-tool calls, costs. `proxy_dump_payloads` persists every request and
-response body under `<run>/audit/` so you can grep what the model
-actually saw and produced.
+| Knob | Default | What it shows |
+|---|---|---|
+| `console_log_enabled` | `false` | streams events as they happen — turn boundaries, tool calls, costs |
+| `proxy_dump_payloads` | `false` | persists every request/response body under `<run>/audit/` so you can grep what the model actually saw and produced |
+| `persist_run_metadata` | `false` | writes `<run>/input.json` (resolved RunTask snapshot) + `<run>/trace.json` (assistant blocks + final metadata) |
+
+All three are independent. Flip on what you need; the rest stays quiet.
 
 ---
 
@@ -93,7 +121,7 @@ Settings on the motor instance — set once at construction.
 | `model`                     | `str`                               | `"claude-opus-4-6"`                     | Default model the SDK uses                                                               |
 | `upstream_base_url`         | `str`                               | `"https://api.anthropic.com"`           | Upstream endpoint the proxy forwards to                                                  |
 | `upstream_adapter`          | `str` or `UpstreamAdapter`          | `"anthropic"`                           | Provider preset (`"anthropic"`, `"vllm"`) or a custom adapter instance                   |
-| `workspace_root`            | `Path`                              | `~/.sophia-motor/runs/`                 | Where per-run dirs are created. Must be outside any git repo / `pyproject.toml` ancestor |
+| `workspace_root`            | `Path`                              | `<tempdir>/sophia-motor/runs/`          | Where per-run dirs are created. **Ephemeral by default** (OS-managed cleanup). Set explicitly for persistence. Must be outside any git repo / `pyproject.toml` ancestor |
 | `proxy_enabled`             | `bool`                              | `True`                                  | Disable only for unit tests that mock the SDK                                            |
 | `proxy_host`                | `str`                               | `"127.0.0.1"`                           | Bind host for the local proxy                                                            |
 | `proxy_port`                | `int \| None`                       | `None`                                  | `None` → kernel picks free port; explicit int pins it (raises `RuntimeError` if busy)    |
@@ -102,10 +130,13 @@ Settings on the motor instance — set once at construction.
 | `proxy_strip_user_system_reminders` | `bool`                      | `True`                                  | Strip `<system-reminder>` injected by the CLI from turn ≥2 user messages                 |
 | `tool_description_overrides`| `dict[str, str]`                    | `{Read: ...}`                           | Replace tool descriptions before forwarding upstream (Read defaults to a path-policy version) |
 | `guardrail`                 | `"strict" \| "permissive" \| "off"` | `"strict"`                              | Built-in PreToolUse hook (see [SECURITY.md](./SECURITY.md))                              |
+| `custom_pre_tool_hooks`     | `list[Any]`                         | `[]`                                    | Project-specific PreToolUse hooks composed alongside the built-in guard. Each is `async def hook(input_data, tool_use_id, context) -> dict`. Use `Allow()` / `Deny(reason)` from `sophia_motor`. Any single deny wins. See [SECURITY.md](./SECURITY.md#custom-hooks). Overridable per `RunTask` |
 | `disable_claude_md`         | `bool`                              | `True`                                  | Skip auto-loading repo `CLAUDE.md` / `MEMORY.md` into the agent's context                |
 | `console_log_enabled`       | `bool`                              | `False`                                 | Colored console logger for events                                                        |
+| `persist_run_metadata`      | `bool`                              | `False`                                 | Write `<run>/input.json` (resolved RunTask snapshot) + `<run>/trace.json` (assistant blocks + metadata). Independent from `proxy_dump_payloads` (which gates `<run>/audit/`) |
 | `cli_bare_mode`             | `bool`                              | `False`                                 | Pass `--bare` to the CLI subprocess (advanced; breaks the Skill tool — see source)       |
 | `cli_no_session_persistence`| `bool`                              | `True`                                  | Pass `--no-session-persistence` (no `session.jsonl` written by the CLI)                  |
+| `cli_strict_mcp_config`     | `bool`                              | `True`                                  | Pass `--strict-mcp-config` — only the SDK-passed MCP servers (your `@tool` functions) reach the model. Skips ambient discovery: `.mcp.json` walk, user-settings MCP, plugin MCP, `claude.ai` proxy connectors. Auto-skipped in chat-mode |
 | `default_system`            | `str?`                              | `None`                                  | Default system prompt applied when `RunTask.system` is `None`                            |
 | `default_tools`             | `list[str]?`                        | `[]`                                    | Default hard tool whitelist; `None` = SDK's `claude_code` preset (every built-in)         |
 | `default_allowed_tools`     | `list[str]?`                        | `None`                                  | Default permission-skip list                                                             |
@@ -136,6 +167,7 @@ Settings on the single call — passed to `motor.run(RunTask(...))`. Anything le
 | `skills`            | `Path \| str \| list?`  | Skill source folder(s). Each subdir with `SKILL.md` is linked into the run                                                                                                                                                                     |
 | `disallowed_skills` | `list[str]`             | Skill names to skip even if found in source                                                                                                                                                                                                    |
 | `agents`            | `dict[str, AgentDefinition]?` | Per-task subagent overrides. `None` falls back to `MotorConfig.default_agents`. `{}` explicitly disables. Requires `"Agent"` in `tools`.                                                                                              |
+| `custom_pre_tool_hooks` | `list[Any]?`        | Per-task PreToolUse hooks. `None` (default) falls back to `MotorConfig.custom_pre_tool_hooks`; a list **fully replaces** the config (NOT merge); `[]` explicitly drops the config defaults for this run. Built-in guardrail still runs. See [SECURITY.md](./SECURITY.md#custom-hooks) |
 | `output_schema`     | `type[BaseModel]?`      | Pydantic class — agent commits to this shape, returned in `RunResult.output_data`                                                                                                                                                              |
 | `session_id`        | `str?`                  | Resume an existing SDK session (chat-style). Most callers use `Chat` instead.                                                                                                                                                                  |
 | `workspace_dir`     | `Path?`                 | Pre-existing chat workspace to reuse. Set by `Chat` for multi-turn dialogs.                                                                                                                                                                    |

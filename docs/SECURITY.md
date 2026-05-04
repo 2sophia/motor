@@ -40,8 +40,10 @@ common gaps:
 | Filesystem writes | unrestricted | `Write` restricted to `outputs/` (strict), with symlink-escape resolution |
 | Bash blocklist | none | dev/admin commands + `bash -c` + `..` + `/dev/tcp` + `eval`/`source`/`exec` redirects |
 | Exfiltration patterns | none | `curl`/`wget` with `--data`/`--upload-file` blocked in **both** strict and permissive |
-| Per-run isolation | shared cwd | each run gets its own workspace under `<workspace_root>/<run_id>/`, deleted by `motor.clean_runs()` |
+| MCP discovery surface | reads `.mcp.json` upward from cwd, user-settings MCP, plugin MCP, `claude.ai` proxy connectors (Gmail, Slack, Datadog, ...) | `cli_strict_mcp_config=True` (default): **only** the SDK-passed `@tool` functions reach the model. All ambient MCP sources skipped |
+| Per-run isolation | shared cwd | each run gets its own workspace under `<workspace_root>/<run_id>/`. **Default ephemeral** in `<tempdir>/sophia-motor/runs/` — OS sweeps it (`systemd-tmpfiles`, reboot, cyclic) |
 | Audit trail | none | every request/response body persisted under `<run>/audit/` (when `proxy_dump_payloads=True`) |
+| Custom policy hooks | none | `MotorConfig.custom_pre_tool_hooks` + `RunTask.custom_pre_tool_hooks` for project-specific bans on top of the strict floor (see below) |
 
 ---
 
@@ -75,6 +77,70 @@ In permissive mode the python-c whitelist does **not** apply: the dev
 has signed off on trusted-tool tier and any `python` call is fine
 (other than the cross-mode escapes like `bash -c`, `eval`, `/dev/tcp`,
 `| python`, ...).
+
+---
+
+## Custom hooks
+
+The strict floor is the universal sandbox. **Project-specific policies** live on top — pass `async def` callbacks to `MotorConfig.custom_pre_tool_hooks` (or `RunTask.custom_pre_tool_hooks` for per-call overrides). They run **after** the built-in guard in the same `PreToolUse` matcher; **any single deny wins** (logical AND of allow).
+
+```python
+from sophia_motor import Allow, Deny, Motor, MotorConfig, RunTask
+
+
+async def secrets_policy(input_data, tool_use_id, context):
+    """Block any Read/Edit of paths that look like secret material."""
+    if input_data["tool_name"] not in ("Read", "Edit", "Glob", "Grep"):
+        return Allow()
+    path = input_data["tool_input"].get("file_path") or input_data["tool_input"].get("path") or ""
+    forbidden = ("secrets", "credentials", ".pem", ".key", "password")
+    for token in forbidden:
+        if token in path.lower():
+            return Deny(reason=(
+                f"Path '{path}' is blocked by the secrets policy "
+                f"(contains '{token}'). Read non-secret files only."
+            ))
+    return Allow()
+
+
+motor = Motor(MotorConfig(
+    guardrail="strict",                         # built-in floor stays on
+    custom_pre_tool_hooks=[secrets_policy],     # composed on top
+))
+```
+
+`Allow()` returns the empty dict (signals "let it through"). `Deny(reason=...)` builds the **modern PreToolUse return shape** (`hookSpecificOutput.permissionDecision="deny"` + `permissionDecisionReason`, with the legacy `decision: "block"` field kept for max CLI back-compat). Both helpers are exported from `sophia_motor` directly — you don't need to remember the field names.
+
+### Per-task overrides
+
+Pass a different policy list for one specific run via `RunTask.custom_pre_tool_hooks`. Same convention as every other `RunTask` field: `None` falls back to the config; a list **fully replaces** the config (never merges); `[]` explicitly drops the config defaults for this single call.
+
+```python
+motor = Motor(MotorConfig(
+    custom_pre_tool_hooks=[default_policy],    # the floor for every run
+))
+
+# Stricter policy for one task — default_policy is REPLACED, not extended.
+await motor.run(RunTask(
+    prompt="...",
+    tools=["Read", "Bash"],
+    custom_pre_tool_hooks=[stricter_secrets_policy],
+))
+
+# Zero custom hooks for this task — only the built-in guardrail runs.
+await motor.run(RunTask(prompt="...", custom_pre_tool_hooks=[]))
+
+# Inherits from config (no field passed) — default_policy applies.
+await motor.run(RunTask(prompt="..."))
+```
+
+### Why we don't wrap user hooks
+
+The motor **does not** wrap your hook with a fail-open shim that would catch garbage returns and silently default to allow. For security-critical paths, `fail-loud > fail-open`: if your hook returns `None` (forgotten `return`), the SDK crashes the run and you see the bug in 5 minutes. A "tolerant" wrapper would let a missing `return` silently allow the very call you meant to deny — a warning in production logs that nobody reads. Use the `Allow()` / `Deny(reason=...)` helpers and write your hooks with `return` on every path; the SDK does the right thing if you slip up.
+
+### Worked example
+
+`examples/custom-guard/main.py` ships two hooks composed in one list (a secrets-path policy + a Bash-on-system-logs policy) and runs both an allowed and a denied scenario live, showing the deny reason flowing back to the model verbatim. Read it for the canonical pattern.
 
 ---
 
