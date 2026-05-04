@@ -7,6 +7,7 @@ resolution cascade only sees process env vars or hardcoded defaults.
 """
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ _ENV_KEYS = (
     "SOPHIA_MOTOR_PROXY_HOST",
     "SOPHIA_MOTOR_CONSOLE_LOG",
     "SOPHIA_MOTOR_AUDIT_DUMP",
+    "SOPHIA_MOTOR_PERSIST_RUN_METADATA",
     "SOPHIA_MOTOR_BASE_URL",
     "SOPHIA_MOTOR_ADAPTER",
 )
@@ -38,11 +40,24 @@ def test_defaults_when_no_env_no_dotenv(clean_env) -> None:
     c = MotorConfig(api_key="x")
     assert c.model == "claude-opus-4-6"
     assert c.proxy_host == "127.0.0.1"
-    assert c.workspace_root == (Path.home() / ".sophia-motor" / "runs").resolve()
+    expected_default = (Path(tempfile.gettempdir()) / "sophia-motor" / "runs").resolve()
+    assert c.workspace_root == expected_default
     assert c.console_log_enabled is False
     assert c.proxy_dump_payloads is False
+    assert c.persist_run_metadata is False
     assert c.upstream_base_url == "https://api.anthropic.com"
     assert c.upstream_adapter == "anthropic"
+
+
+def test_default_workspace_lives_in_tempdir(clean_env) -> None:
+    """Default is ephemeral — fire-and-forget by design. Persistence is
+    opt-in via `workspace_root=...` or `SOPHIA_MOTOR_WORKSPACE_ROOT`."""
+    c = MotorConfig(api_key="x")
+    tmp = Path(tempfile.gettempdir()).resolve()
+    assert c.workspace_root.is_relative_to(tmp), (
+        f"default workspace_root {c.workspace_root} must live under "
+        f"tempfile.gettempdir() ({tmp})"
+    )
 
 
 def test_env_overrides_defaults(clean_env, monkeypatch) -> None:
@@ -51,6 +66,7 @@ def test_env_overrides_defaults(clean_env, monkeypatch) -> None:
     monkeypatch.setenv("SOPHIA_MOTOR_WORKSPACE_ROOT", str(clean_env / "runs"))
     monkeypatch.setenv("SOPHIA_MOTOR_CONSOLE_LOG", "true")
     monkeypatch.setenv("SOPHIA_MOTOR_AUDIT_DUMP", "yes")
+    monkeypatch.setenv("SOPHIA_MOTOR_PERSIST_RUN_METADATA", "1")
 
     c = MotorConfig(api_key="x")
     assert c.model == "claude-haiku-4-5"
@@ -58,22 +74,26 @@ def test_env_overrides_defaults(clean_env, monkeypatch) -> None:
     assert c.workspace_root == (clean_env / "runs").resolve()
     assert c.console_log_enabled is True
     assert c.proxy_dump_payloads is True
+    assert c.persist_run_metadata is True
 
 
 def test_explicit_param_beats_env(clean_env, monkeypatch) -> None:
     monkeypatch.setenv("SOPHIA_MOTOR_MODEL", "claude-haiku-4-5")
     monkeypatch.setenv("SOPHIA_MOTOR_CONSOLE_LOG", "true")
     monkeypatch.setenv("SOPHIA_MOTOR_AUDIT_DUMP", "true")
+    monkeypatch.setenv("SOPHIA_MOTOR_PERSIST_RUN_METADATA", "true")
 
     c = MotorConfig(
         api_key="x",
         model="claude-opus-4-6",
         console_log_enabled=False,
         proxy_dump_payloads=False,
+        persist_run_metadata=False,
     )
     assert c.model == "claude-opus-4-6"
     assert c.console_log_enabled is False
     assert c.proxy_dump_payloads is False
+    assert c.persist_run_metadata is False
 
 
 @pytest.mark.parametrize("raw,expected", [

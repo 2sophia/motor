@@ -3,8 +3,10 @@
 """Docker example — same code as a local run; env decides where to write.
 
 The Dockerfile sets `SOPHIA_MOTOR_WORKSPACE_ROOT=/data/runs` so audit
-dumps and trace files land on a mounted volume. Locally you'd run the
-exact same `main.py` and it'd write under `~/.sophia-motor/runs/`.
+dumps and trace files land on a mounted volume. Locally — without that
+env — `main.py` writes to the OS tempdir (e.g. `/tmp/sophia-motor/runs/`)
+which is ephemeral by design. Whether you want persistence is decided
+by the env var, not the code.
 
 Run:
     docker compose up --build

@@ -268,11 +268,15 @@ def discover_output_files(outputs_dir: Path) -> list[OutputFile]:
 class RunResult:
     """Final result of a Motor.run().
 
-    Note on `output_files`: the run workspace under `~/.sophia-motor/runs/`
-    is **transient**. `motor.clean_runs()` wipes it; cron sweeps or
-    container teardowns may too. If the agent wrote a file you care
-    about, persist it now via `output_file.copy_to(...)` —
-    don't assume the path will be there in an hour.
+    Note on `output_files`: the run workspace lives under
+    `MotorConfig.workspace_root` which **defaults to a tempdir** (e.g.
+    `/tmp/sophia-motor/runs/` on Linux) — so it is **transient by design**.
+    The OS sweeps temp on its own schedule; `motor.clean_runs()` wipes
+    it explicitly; cron sweeps or container teardowns may too. If the
+    agent wrote a file you care about, persist it now via
+    `output_file.copy_to(...)` — don't assume the path will be there in
+    an hour. For full audit retention, set `workspace_root` to a
+    persistent path.
     """
     run_id: str
     output_text: Optional[str]

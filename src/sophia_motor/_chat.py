@@ -91,7 +91,9 @@ class Chat:
         if root is not None:
             self._root = root / self.chat_id
         else:
-            # Default sibling of the runs root: ~/.sophia-motor/chats/<id>/
+            # Default sibling of the runs root: <workspace_root>/../chats/<id>/
+            # (so chats live next to runs — ephemeral by default in /tmp,
+            # persistent if the caller pointed workspace_root at a real path).
             self._root = motor.config.workspace_root.parent / "chats" / self.chat_id
         self._root.mkdir(parents=True, exist_ok=True)
 

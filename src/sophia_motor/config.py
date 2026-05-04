@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 from typing import Any, Optional
@@ -66,7 +67,7 @@ def _resolve_api_key() -> str:
 def _resolve_workspace_root() -> Path:
     if v := _env_str("SOPHIA_MOTOR_WORKSPACE_ROOT"):
         return Path(v).expanduser().resolve()
-    return (Path.home() / ".sophia-motor" / "runs").resolve()
+    return (Path(tempfile.gettempdir()) / "sophia-motor" / "runs").resolve()
 
 
 def _resolve_model() -> str:
@@ -84,6 +85,11 @@ def _resolve_console_log() -> bool:
 
 def _resolve_audit_dump() -> bool:
     v = _env_bool("SOPHIA_MOTOR_AUDIT_DUMP")
+    return False if v is None else v
+
+
+def _resolve_persist_run_metadata() -> bool:
+    v = _env_bool("SOPHIA_MOTOR_PERSIST_RUN_METADATA")
     return False if v is None else v
 
 
@@ -209,17 +215,24 @@ class MotorConfig(BaseModel):
         description=(
             "Root directory for per-run workspaces. Resolution cascade: "
             "explicit param > SOPHIA_MOTOR_WORKSPACE_ROOT env var > "
-            "`~/.sophia-motor/runs/` — outside any repo, always safe.\n\n"
+            "`<tempfile.gettempdir()>/sophia-motor/runs/` (e.g. "
+            "`/tmp/sophia-motor/runs/` on Linux).\n\n"
+            "**By default ephemeral** — the OS sweeps the temp dir on its "
+            "own schedule (Linux: `systemd-tmpfiles` clears entries older "
+            "than ~10 days; macOS: cleared at reboot; Windows: cyclic "
+            "cleanup). Motor was designed as a fire-and-forget intelligent "
+            "function; the storage shouldn't be a developer concern.\n\n"
+            "**For persistence** (audit retention, compliance, debug "
+            "post-mortem), pass an explicit path: `MotorConfig("
+            "workspace_root='~/.sophia-motor/runs')` or "
+            "`SOPHIA_MOTOR_WORKSPACE_ROOT=...`. In containers, point at a "
+            "mounted volume: `MotorConfig(workspace_root='/data/runs')`.\n\n"
             "MUST be a directory whose ancestors do NOT contain `.git/`, "
             "`pyproject.toml`, or `package.json`. The bundled Claude CLI "
             "performs upward project-root discovery and, when triggered, "
             "rewrites its own session/backup state into a deeply-nested "
             "cwd-relative fallback path (verified empirically — no env var "
-            "currently overrides this behaviour, including CLAUDE_PROJECT_DIR).\n\n"
-            "Container deployments: pass an explicit `workspace_root` "
-            "pointed at a mounted volume, e.g. `MotorConfig("
-            "workspace_root='/data/sophia-motor/runs')` with `/data` mounted "
-            "for audit persistence across container restarts."
+            "currently overrides this behaviour, including CLAUDE_PROJECT_DIR)."
         ),
     )
 
@@ -326,6 +339,20 @@ class MotorConfig(BaseModel):
             "watch turns scroll by."
         ),
     )
+    persist_run_metadata: bool = Field(
+        default_factory=_resolve_persist_run_metadata,
+        description=(
+            "Write `<run>/input.json` (the resolved RunTask snapshot) and "
+            "`<run>/trace.json` (metadata + assistant blocks + result text) "
+            "to disk at run end. Resolution cascade: explicit param > "
+            "SOPHIA_MOTOR_PERSIST_RUN_METADATA env var > False. Default OFF: "
+            "fire-and-forget runs leave zero motor-side files on disk; flip "
+            "on (or via env) when you want a per-run audit footprint for "
+            "compliance / regression / debug. Independent from "
+            "`proxy_dump_payloads` (which controls the proxy-side request/"
+            "response audit under `<run>/audit/`)."
+        ),
+    )
 
     # ── CLI flags ────────────────────────────────────────────────────
     cli_bare_mode: bool = Field(
@@ -346,6 +373,23 @@ class MotorConfig(BaseModel):
             "no session jsonl written under <CLAUDE_CONFIG_DIR>/projects/. "
             "Each motor run is isolated with its own audit dir; resume "
             "across runs is not a use case for this motor."
+        ),
+    )
+    cli_strict_mcp_config: bool = Field(
+        default=True,
+        description=(
+            "Pass --strict-mcp-config to the Claude CLI subprocess: only "
+            "MCP servers explicitly registered via the SDK (i.e. the @tool-"
+            "decorated Python functions the dev passed in default_tools / "
+            "RunTask.tools / AgentDefinition.tools) are exposed to the "
+            "model. The CLI's ambient MCP discovery is fully skipped: "
+            ".mcp.json walk from cwd upward, user-settings MCP, plugin "
+            "MCP, claude.ai proxy connectors (datadog, Gmail, Slack, "
+            "BigQuery, PubMed). This is the sandbox boundary you want for "
+            "programmatic runs — the host machine's MCP state does not "
+            "leak into the agent. Default ON; flip OFF only when you "
+            "explicitly want the CLI to discover MCP from the environment "
+            "(rare). Auto-skipped in chat-mode (caller-managed ambient)."
         ),
     )
 

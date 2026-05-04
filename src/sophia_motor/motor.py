@@ -359,10 +359,11 @@ class Motor:
             run_id, attachments_items, skills_items, task.disallowed_skills,
             chat_workspace_dir=task.workspace_dir,
         )
-        self._persist_input(
-            workspace_dir, run_id, task,
-            attachments_manifest, skills_manifest,
-        )
+        if self.config.persist_run_metadata:
+            self._persist_input(
+                workspace_dir, run_id, task,
+                attachments_manifest, skills_manifest,
+            )
 
         if self._proxy is not None:
             self._proxy.register_run(run_id, audit_dir)
@@ -708,7 +709,8 @@ class Motor:
             session_id=current_session_id,
         )
 
-        self._persist_trace(workspace_dir, metadata, collected, result_text)
+        if self.config.persist_run_metadata:
+            self._persist_trace(workspace_dir, metadata, collected, result_text)
 
         await self.events.log(
             "INFO",
@@ -866,16 +868,14 @@ class Motor:
         )
 
     def _seed_claude_config_dir(self, claude_dir: Path, plugins_dir: Path) -> None:
-        """Seed an empty plugins manifest so the CLI doesn't try to load
-        anything from disk on startup. CLAUDE.md auto-loading is gated by
-        the CLAUDE_CODE_DISABLE_CLAUDE_MDS env var (set in _build_sdk_options
-        when self.config.disable_claude_md is True), not by .config.json.
+        """Pre-seed CLAUDE_CONFIG_DIR. Currently a no-op: the CLI no longer
+        creates `installed_plugins.json` on startup once
+        CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1 is set
+        (see _build_sdk_options). Kept as a hook for future seeding needs
+        (e.g. policy file overlays). CLAUDE.md auto-loading is gated by
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS, not by anything written here.
         """
-        plugins_file = plugins_dir / "installed_plugins.json"
-        if not plugins_file.exists():
-            plugins_file.write_text(
-                '{"version": 2, "plugins": {}}', encoding="utf-8",
-            )
+        return
 
     def _persist_input(
         self,
@@ -977,12 +977,25 @@ class Motor:
             "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
             "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
             "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1",
+            # Stop the CLI from creating/touching <CLAUDE_CONFIG_DIR>/plugins/
+            # installed_plugins.json on startup. Without this the binary
+            # writes a default {version:2, plugins:{}} manifest into the
+            # ridirected config dir (~30 byte residual write per run).
+            "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+            # Stop the CLI from materializing per-subagent meta files under
+            # <CLAUDE_CONFIG_DIR>/projects/<sanitized-cwd>/<session>/subagents/
+            # agent-<hash>.meta.json. Subagent definitions are passed in-memory
+            # via SDK options; the on-disk meta is only used by the interactive
+            # /agents UI which programmatic runs don't expose.
+            "CLAUDE_CODE_DISABLE_AGENTS_FLEET": "1",
             # Generic anti-noise (DISABLE_* without CLAUDE_CODE_ prefix)
             "DISABLE_TELEMETRY": "1",
             "DISABLE_ERROR_REPORTING": "1",
             "DISABLE_AUTOUPDATER": "1",
             "DISABLE_AUTO_COMPACT": "1",
             "DISABLE_BUG_COMMAND": "1",
+            "DISABLE_INSTALLATION_CHECKS": "1",
+            "DISABLE_UPDATES": "1",
             # Strip the bundled CLI's built-in subagents (Explore,
             # general-purpose, Plan, statusline-setup, ...) from the
             # Agent tool description. Without this, every custom agent
@@ -1143,6 +1156,17 @@ class Motor:
         # the next turn's --resume needs the file on disk.
         if self.config.cli_no_session_persistence and task.workspace_dir is None:
             extra_args["no-session-persistence"] = None
+        # `--strict-mcp-config` tells the CLI to use ONLY the MCP servers
+        # passed via --mcp-config (the SDK forwards motor.mcp_servers there)
+        # and ignore every other MCP source: claude.ai proxy connectors,
+        # .mcp.json file walk from cwd upward, user settings MCP, plugin MCP.
+        # For programmatic motor runs this is exactly the boundary we want:
+        # only Python @tool-decorated functions registered by the dev reach
+        # the model; nothing the host machine happens to have lying around.
+        # Skipped under chat-mode workspace_dir (caller already chose what's
+        # ambient) — same gate as no-session-persistence.
+        if self.config.cli_strict_mcp_config and task.workspace_dir is None:
+            extra_args["strict-mcp-config"] = None
         # Strict structured output: forward the Pydantic-derived JSON Schema
         # to the CLI's `--json-schema` flag. The CLI validates the model's
         # final structured payload server-side; the result lands in

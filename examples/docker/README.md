@@ -17,10 +17,11 @@ ENV SOPHIA_MOTOR_WORKSPACE_ROOT=/data/runs
 VOLUME ["/data"]
 ```
 
-Locally `Motor()` writes under `~/.sophia-motor/runs/`. In the
-container, the env override redirects it to `/data/runs/`, which is
-the mount point for the host volume. **No code change between
-environments**.
+Locally — without the env override — `Motor()` writes to the OS tempdir
+(e.g. `/tmp/sophia-motor/runs/` on Linux), which is ephemeral by design.
+In the container, the env override redirects it to `/data/runs/`, which
+is the mount point for the host volume — persistent across restarts.
+**No code change between environments**.
 
 ## Files
 
@@ -55,9 +56,10 @@ docker run --rm \
 1. **`Path.home()` can crash** for ad-hoc UIDs without a `/etc/passwd`
    entry. The Dockerfile creates a real user (`agent`, UID 1000) and
    sets `HOME` explicitly.
-2. **`~/.sophia-motor/runs/` dies with the container** unless the
-   volume is mounted. The `VOLUME ["/data"]` declaration + the
-   workspace env override solve that.
+2. **The default tempdir workspace dies with the container** (and would
+   die with the host's tempdir sweep too). The `VOLUME ["/data"]`
+   declaration + the workspace env override redirect runs to the mount
+   so they survive container teardown.
 
 ## Multi-arch
 
@@ -70,7 +72,7 @@ Apple Silicon or AWS Graviton.
 
 | Env var                       | What it does                          | Default       |
 |-------------------------------|---------------------------------------|---------------|
-| `SOPHIA_MOTOR_WORKSPACE_ROOT` | Where runs are persisted              | `~/.sophia-motor/runs` |
+| `SOPHIA_MOTOR_WORKSPACE_ROOT` | Where runs are persisted              | `<tempdir>/sophia-motor/runs` (e.g. `/tmp/...`) |
 | `SOPHIA_MOTOR_MODEL`          | Default model id                      | `claude-opus-4-6` |
 | `SOPHIA_MOTOR_CONSOLE_LOG`    | Stream events to stdout               | `false` |
 | `SOPHIA_MOTOR_AUDIT_DUMP`     | Write request/response bodies to disk | `false` |

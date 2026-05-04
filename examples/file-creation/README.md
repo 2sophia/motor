@@ -54,12 +54,14 @@ python main.py
 Files in `<run>/agent_cwd/outputs/` live until **whatever wipes the
 run directory first**:
 
+- the OS sweep on the default tempdir workspace (`/tmp/sophia-motor/runs/`
+  on Linux gets wiped by `systemd-tmpfiles`; macOS by reboot; Windows
+  cyclically)
 - `motor.clean_runs(...)` (manual or `motor.clean_runs(keep_last=10)`)
 - a cron / sweep / app cleanup that prunes old runs
 - `workspace_root` on a tmpfs / container ephemeral volume that resets
   on restart
-- a teammate running `rm -rf ~/.sophia-motor/runs/` (the path is
-  documented as wipeable)
+- a teammate running `rm -rf` on a custom persistent `workspace_root`
 
 The audit trail under `<run>/audit/` (request/response dumps + the
 `tool_result` block recording what the model wrote) is intended for

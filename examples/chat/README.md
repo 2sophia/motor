@@ -25,7 +25,9 @@ the prior turns in context.
 ## How it works under the hood
 
 - `motor.chat(chat_id=...)` mints / opens a chat and a shared workspace
-  under `~/.sophia-motor/chats/<chat_id>/`.
+  under `<workspace_root>/../chats/<chat_id>/` — by default in the OS
+  tempdir (e.g. `/tmp/sophia-motor/chats/...`), but it follows whatever
+  `workspace_root` is set on the motor.
 - The first `send()` runs against the SDK without a `resume`, captures
   the new `session_id` from the CLI's init message, stores it on the
   Chat instance.

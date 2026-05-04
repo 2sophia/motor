@@ -537,9 +537,11 @@ The motor isn't a free lunch. Trade-offs to know about:
 
 - **Pre-1.0**: API still moves between minor versions. If you need a frozen contract, pin to an exact
   `sophia-motor==X.Y.Z`.
-- **Audit trail is mandatory**: every run lives in `~/.sophia-motor/runs/<run_id>/` (request/response dumps +
-  workspace). That's a feature for compliance/review and a footprint you'll want to manage. `clean_runs(...)` is
-  shipped — wire it into your lifecycle if you produce many runs.
+- **Ephemeral by default**: the workspace lives under `<tempfile.gettempdir()>/sophia-motor/runs/<run_id>/`
+  (e.g. `/tmp/sophia-motor/runs/...` on Linux) — the OS sweeps it on its own schedule. Motor was designed as a
+  fire-and-forget intelligent function; storage isn't a developer concern. For audit retention, debug
+  post-mortem, or compliance, opt in with `MotorConfig(workspace_root="~/.sophia-motor/runs")` or
+  `SOPHIA_MOTOR_WORKSPACE_ROOT=...` and run `clean_runs(...)` on your own cadence.
 - **Proxy in-process**: a local FastAPI + Uvicorn proxy boots on the first run (≈500 ms once, then idle). That's the
   price of audit dump + selective system-reminder strip + per-turn events.
 - **Strict guardrail by default**: `Read`/`Edit` lexically restricted to the run's cwd, `Write` to `outputs/`, `Bash`
