@@ -98,6 +98,84 @@ def test_custom_pre_tool_hooks_alone_when_guardrail_off(tmp_path: Path) -> None:
     assert matcher_hooks == [my_hook]
 
 
+def test_task_custom_hooks_override_config(tmp_path: Path) -> None:
+    """`RunTask.custom_pre_tool_hooks=[fn_b]` replaces the config's [fn_a]
+    for that single run — full replacement, never merge."""
+    async def fn_a(input_data, tool_use_id, context):
+        return {}
+    async def fn_b(input_data, tool_use_id, context):
+        return {}
+
+    motor = Motor(MotorConfig(
+        api_key="dummy",
+        workspace_root=tmp_path,
+        console_log_enabled=False,
+        custom_pre_tool_hooks=[fn_a],
+    ))
+    opts = motor._build_sdk_options(
+        RunTask(prompt="x", custom_pre_tool_hooks=[fn_b]),
+        agent_cwd=tmp_path / "agent",
+        claude_dir=tmp_path / ".claude",
+        api_key="dummy",
+        run_id="run-test",
+    )
+    matcher_hooks = opts.hooks["PreToolUse"][0].hooks
+    # built-in guard + fn_b only (fn_a does NOT leak through from config)
+    assert len(matcher_hooks) == 2
+    assert matcher_hooks[1] is fn_b
+    assert fn_a not in matcher_hooks
+
+
+def test_task_custom_hooks_none_inherits_config(tmp_path: Path) -> None:
+    """Default `RunTask.custom_pre_tool_hooks=None` means "use the
+    motor's config". The config list flows through unchanged."""
+    async def fn_a(input_data, tool_use_id, context):
+        return {}
+
+    motor = Motor(MotorConfig(
+        api_key="dummy",
+        workspace_root=tmp_path,
+        console_log_enabled=False,
+        custom_pre_tool_hooks=[fn_a],
+    ))
+    opts = motor._build_sdk_options(
+        RunTask(prompt="x"),  # no custom_pre_tool_hooks
+        agent_cwd=tmp_path / "agent",
+        claude_dir=tmp_path / ".claude",
+        api_key="dummy",
+        run_id="run-test",
+    )
+    matcher_hooks = opts.hooks["PreToolUse"][0].hooks
+    assert len(matcher_hooks) == 2  # built-in + fn_a
+    assert matcher_hooks[1] is fn_a
+
+
+def test_task_custom_hooks_empty_list_drops_config(tmp_path: Path) -> None:
+    """Explicit `RunTask(custom_pre_tool_hooks=[])` means "zero custom
+    hooks for this task" — overrides the config's non-empty list. The
+    built-in guard still runs."""
+    async def fn_a(input_data, tool_use_id, context):
+        return {}
+
+    motor = Motor(MotorConfig(
+        api_key="dummy",
+        workspace_root=tmp_path,
+        console_log_enabled=False,
+        custom_pre_tool_hooks=[fn_a],
+    ))
+    opts = motor._build_sdk_options(
+        RunTask(prompt="x", custom_pre_tool_hooks=[]),
+        agent_cwd=tmp_path / "agent",
+        claude_dir=tmp_path / ".claude",
+        api_key="dummy",
+        run_id="run-test",
+    )
+    matcher_hooks = opts.hooks["PreToolUse"][0].hooks
+    # built-in guard only — fn_a from config dropped
+    assert len(matcher_hooks) == 1
+    assert fn_a not in matcher_hooks
+
+
 def test_no_hooks_block_when_off_and_no_custom(tmp_path: Path) -> None:
     """`guardrail='off'` + no custom hooks → no PreToolUse block at all."""
     motor = Motor(MotorConfig(

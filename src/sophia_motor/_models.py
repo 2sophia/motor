@@ -151,6 +151,17 @@ class RunTask:
     # callers should not pass this directly — use `Chat` which sets it.
     workspace_dir: Optional[Path] = None
 
+    # Per-task override for `MotorConfig.custom_pre_tool_hooks`. Same
+    # override semantics as the rest of the RunTask fields: None → use
+    # the motor config; a list → full replacement (NOT merge) for this
+    # one run. The built-in guardrail (strict / permissive / off) is
+    # NOT part of this list — guardrail mode is config-level only and
+    # always runs first. Use this slot for project-specific PreToolUse
+    # rules that vary per task on the same motor singleton (e.g. a
+    # stricter secrets policy for user-facing chat vs the internal
+    # admin pipeline) without spinning up a second Motor.
+    custom_pre_tool_hooks: Optional[list[Any]] = None
+
 
 @dataclass
 class RunMetadata:

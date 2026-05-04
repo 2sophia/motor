@@ -64,6 +64,35 @@ It's not a hard kill switch — it tells the **model** "this didn't fly, try som
 
 For an unrecoverable hard stop on a downstream condition, look at `motor.interrupt()` (caller-side) or the streaming `DoneChunk.metadata.was_interrupted` flag.
 
+## Per-task override
+
+Sometimes the same motor instance runs different kinds of tasks (chat-facing prompts, internal admin tooling, batch jobs) with different policies. Pass a per-call list via `RunTask.custom_pre_tool_hooks` — full replacement, not merge:
+
+```python
+motor = Motor(MotorConfig(
+    custom_pre_tool_hooks=[default_policy],   # the floor for every run
+))
+
+# This task gets a STRICTER policy — `default_policy` is replaced, not extended.
+await motor.run(RunTask(
+    prompt="...",
+    tools=["Read", "Bash"],
+    custom_pre_tool_hooks=[stricter_secrets_policy],
+))
+
+# This task gets ZERO custom hooks — only the built-in guardrail runs.
+await motor.run(RunTask(
+    prompt="...",
+    tools=["Read"],
+    custom_pre_tool_hooks=[],     # explicit empty list
+))
+
+# Default — no field passed → inherits from config.
+await motor.run(RunTask(prompt="...", tools=["Read"]))
+```
+
+Same convention as every other `RunTask` field (`tools`, `skills`, `agents`, ...): `None` → use config; explicit list → full replace.
+
 ## Patterns we recommend
 
 - **Make `reason` actionable.** Bad: `"Denied"`. Good: `"Path 'X' is blocked by the secrets policy (matches 'credentials'). Read non-secret files only — e.g. attachments/note.txt."` The model will paraphrase your reason to the user, so write it like a teammate's review comment, not a stack trace.

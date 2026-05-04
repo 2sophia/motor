@@ -309,7 +309,12 @@ class MotorConfig(BaseModel):
             "any single deny wins (logical AND of allow). Use this slot "
             "for project-specific bans (e.g. \"block reads outside the "
             "knowledge-base attachment dir\", \"deny Bash on a model "
-            "registry path\") without forking the motor."
+            "registry path\") without forking the motor.\n\n"
+            "Overridable per RunTask: pass `RunTask(custom_pre_tool_hooks="
+            "[...])` to swap the entire list for a single run (full "
+            "replacement, not merge — same convention as `tools`, "
+            "`skills`, `agents`). Pass `[]` explicitly for \"no custom "
+            "hooks for this task\" even when the motor has defaults."
         ),
     )
     guardrail: str = Field(

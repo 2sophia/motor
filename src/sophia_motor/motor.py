@@ -860,6 +860,11 @@ class Motor:
                 task.agents if task.agents is not None
                 else dict(cfg.default_agents)
             ),
+            custom_pre_tool_hooks=(
+                task.custom_pre_tool_hooks
+                if task.custom_pre_tool_hooks is not None
+                else list(cfg.custom_pre_tool_hooks)
+            ),
             # Chat-mode bits don't have config defaults — they're either
             # set by Chat (which manages them) or left None for standalone
             # runs. Either way the value passes through unchanged.
@@ -1148,7 +1153,19 @@ class Motor:
         # wins (logical AND of allow). Order matters only for log /
         # observability — the built-in guard's BLOCKED warning fires
         # first, which is what you want when debugging deny chains.
-        pretool_hooks.extend(self.config.custom_pre_tool_hooks)
+        #
+        # Resolution: `_apply_config_defaults` normally fills
+        # `task.custom_pre_tool_hooks` from the config when None. We
+        # also fall back to `self.config.custom_pre_tool_hooks` here so
+        # that callers who build SDK options directly (tests, advanced
+        # use) still see the config defaults — and `[]` explicitly on
+        # the task means "drop the config defaults", not "use config".
+        custom_hooks = (
+            task.custom_pre_tool_hooks
+            if task.custom_pre_tool_hooks is not None
+            else self.config.custom_pre_tool_hooks
+        )
+        pretool_hooks.extend(custom_hooks)
         if pretool_hooks:
             sdk_kwargs["hooks"] = {
                 "PreToolUse": [HookMatcher(hooks=pretool_hooks)],
