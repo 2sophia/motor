@@ -34,6 +34,7 @@ from ._models import OutputFile, RunMetadata, RunResult, RunTask
 from ._python_tools import ToolContext, ToolMeta, tool
 from .cleanup import clean_runs
 from .config import MotorConfig
+from .guard import Allow, Deny
 from .events import (
     Event,
     EventBus,
@@ -86,4 +87,7 @@ __all__ = [
     "tool",
     "ToolContext",
     "ToolMeta",
+    # guard helpers — Allow() / Deny(reason) for custom PreToolUse hooks
+    "Allow",
+    "Deny",
 ]

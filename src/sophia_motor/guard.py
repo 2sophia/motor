@@ -20,9 +20,31 @@ Three modes (selected by `MotorConfig.guardrail`):
                   fully control the prompts AND the host the agent runs on
                   (e.g. ephemeral container, dedicated VM).
 
-The hook returns `{}` to allow, or `{"decision": "block", "reason": "..."}`
-to refuse the tool call. The agent receives the reason as feedback and
-typically retries with a corrected approach.
+The hook returns `{}` to allow, or a deny shape to refuse the tool call.
+The agent receives the reason as feedback and typically retries with a
+corrected approach.
+
+Deny shape — the modern path uses `hookSpecificOutput.permissionDecision`
+(per claude-agent-sdk 0.1.71's `PreToolUseHookSpecificOutput`):
+
+    {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "<feedback for the model>",
+        },
+        # Legacy fields below for max CLI back-compat. The bundled CLI
+        # reads `json.decision` first (hooks.ts:540) then falls back to
+        # `hookSpecificOutput.permissionDecision`; both paths set the
+        # same `permissionBehavior='deny'` + `blockingError`. Keeping
+        # both shapes is idempotent and protects against either path
+        # being silently dropped in a future SDK 0.1.x patch.
+        "decision": "block",
+        "reason": "<same as above>",
+    }
+
+The `_deny()` helper below builds this dual shape; tests assert on
+either path.
 """
 from __future__ import annotations
 
@@ -36,6 +58,48 @@ logger = logging.getLogger("sophia_motor.guard")
 
 GuardrailMode = Literal["strict", "permissive", "off"]
 HookCallback = Callable[[dict, Any, Any], Awaitable[dict]]
+
+
+def _deny(reason: str) -> dict:
+    """Build the dual-shape PreToolUse deny return value.
+
+    Modern path (SDK 0.1.71+): `hookSpecificOutput.permissionDecision`.
+    Legacy path (deprecated for PreToolUse but still honoured): top-level
+    `decision: "block"` + `reason`. Both fields land in the same CLI-side
+    `permissionBehavior='deny'` outcome — the dual shape is belt + braces
+    against either path being dropped silently in a future CLI patch.
+    """
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        },
+        "decision": "block",
+        "reason": reason,
+    }
+
+
+def Allow() -> dict:
+    """Public helper for custom guard authors: allow the tool call.
+
+    Returned by user-defined PreToolUse hooks (when motor exposes the
+    `MotorConfig.custom_pre_tool_hooks` slot in a future minor) to
+    signal "let this through". Equivalent to returning `{}`.
+    """
+    return {}
+
+
+def Deny(reason: str) -> dict:
+    """Public helper for custom guard authors: block the tool call with
+    a reason the model receives as feedback.
+
+    Wraps `_deny()` so users get the same dual-shape (modern + legacy)
+    return without having to know the field names. Use this when writing
+    a custom PreToolUse hook outside the built-in strict/permissive
+    guardrail.
+    """
+    return _deny(reason)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -406,28 +470,22 @@ def make_guard_hook(mode: GuardrailMode) -> HookCallback | None:
             file_path = str(tool_input.get("file_path", ""))
             if mode == "strict" and not _is_path_in_cwd(file_path, cwd_resolved, cwd):
                 logger.warning("[guard] BLOCKED %s outside cwd: %s", tool_name, file_path)
-                return {
-                    "decision": "block",
-                    "reason": (
-                        f"Path '{file_path}' is outside the workspace "
-                        f"({cwd}). Use a path relative to your cwd, "
-                        f"e.g. attachments/<file> or outputs/<file>."
-                    ),
-                }
+                return _deny(
+                    f"Path '{file_path}' is outside the workspace "
+                    f"({cwd}). Use a path relative to your cwd, "
+                    f"e.g. attachments/<file> or outputs/<file>."
+                )
 
         # ── Glob / Grep: path parameter inside cwd ───────────────────────
         if tool_name in ("Glob", "Grep"):
             path = str(tool_input.get("path", ""))
             if mode == "strict" and path and not _is_path_in_cwd(path, cwd_resolved, cwd):
                 logger.warning("[guard] BLOCKED %s outside cwd: %s", tool_name, path)
-                return {
-                    "decision": "block",
-                    "reason": (
-                        f"Search path '{path}' is outside the workspace "
-                        f"({cwd}). Search relative to cwd, e.g. "
-                        f"path='.' or path='attachments/'."
-                    ),
-                }
+                return _deny(
+                    f"Search path '{path}' is outside the workspace "
+                    f"({cwd}). Search relative to cwd, e.g. "
+                    f"path='.' or path='attachments/'."
+                )
 
         # ── Write: target must be in outputs/ (strict) ───────────────────
         if tool_name == "Write" and mode == "strict":
@@ -440,13 +498,10 @@ def make_guard_hook(mode: GuardrailMode) -> HookCallback | None:
             if not ok:
                 basename = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
                 logger.warning("[guard] BLOCKED Write outside outputs/: %s", file_path)
-                return {
-                    "decision": "block",
-                    "reason": (
-                        f"Write only to outputs/. "
-                        f"Try Write(file_path='outputs/{basename}', ...)."
-                    ),
-                }
+                return _deny(
+                    f"Write only to outputs/. "
+                    f"Try Write(file_path='outputs/{basename}', ...)."
+                )
             if cwd:
                 resolved = _resolve_under_cwd(file_path, cwd)
                 outputs_root = str((pathlib.Path(cwd) / "outputs").resolve(strict=False))
@@ -456,14 +511,11 @@ def make_guard_hook(mode: GuardrailMode) -> HookCallback | None:
                 if not under:
                     logger.warning("[guard] BLOCKED Write symlink escape: %s → %s",
                                    file_path, resolved)
-                    return {
-                        "decision": "block",
-                        "reason": (
-                            "Write target resolves outside outputs/ "
-                            "(possible symlink escape). Use a plain "
-                            "filename inside outputs/."
-                        ),
-                    }
+                    return _deny(
+                        "Write target resolves outside outputs/ "
+                        "(possible symlink escape). Use a plain "
+                        "filename inside outputs/."
+                    )
 
         # ── Bash: blocklist + special patterns ───────────────────────────
         if tool_name == "Bash":
@@ -472,13 +524,10 @@ def make_guard_hook(mode: GuardrailMode) -> HookCallback | None:
             # 1. exfiltration via curl/wget with data flags (both modes)
             if _EXFIL_RE.search(command):
                 logger.warning("[guard] BLOCKED Bash exfil pattern: %s", command[:200])
-                return {
-                    "decision": "block",
-                    "reason": (
-                        "Outbound data transfer (curl/wget with -d/--data/"
-                        "--upload-file) is not allowed."
-                    ),
-                }
+                return _deny(
+                    "Outbound data transfer (curl/wget with -d/--data/"
+                    "--upload-file) is not allowed."
+                )
 
             # 2. special escape patterns (both modes)
             for pat in _SPECIAL_BLOCKED_RE:
@@ -487,24 +536,18 @@ def make_guard_hook(mode: GuardrailMode) -> HookCallback | None:
                     matched = m.group(0)
                     logger.warning("[guard] BLOCKED Bash pattern '%s': %s",
                                    matched, command[:200])
-                    return {
-                        "decision": "block",
-                        "reason": (
-                            f"Pattern '{matched.strip()}' is not allowed — "
-                            f"it can be used to escape the sandbox."
-                        ),
-                    }
+                    return _deny(
+                        f"Pattern '{matched.strip()}' is not allowed — "
+                        f"it can be used to escape the sandbox."
+                    )
 
             # 3. `..` path escapes
             if _DOT_DOT_RE.search(command):
                 logger.warning("[guard] BLOCKED Bash '..' escape: %s", command[:200])
-                return {
-                    "decision": "block",
-                    "reason": (
-                        "Don't use `..` in paths — it tries to navigate "
-                        "outside the workspace."
-                    ),
-                }
+                return _deny(
+                    "Don't use `..` in paths — it tries to navigate "
+                    "outside the workspace."
+                )
 
             # 4. python invocation guard (strict only) — covers the
             #    Write+exec workaround. python script is allowed only
@@ -514,7 +557,7 @@ def make_guard_hook(mode: GuardrailMode) -> HookCallback | None:
                 py_reason = _check_python_invocation(command, cwd_resolved or cwd)
                 if py_reason:
                     logger.warning("[guard] BLOCKED Bash python: %s", command[:200])
-                    return {"decision": "block", "reason": py_reason}
+                    return _deny(py_reason)
 
             # 5. command-word blocklist (strict vs permissive)
             for m in _CMD_WORD_RE.finditer(command):
@@ -535,7 +578,7 @@ def make_guard_hook(mode: GuardrailMode) -> HookCallback | None:
                             f"Command '{basename}' is blocked: privilege "
                             f"escalation or destructive system call."
                         )
-                    return {"decision": "block", "reason": reason}
+                    return _deny(reason)
 
         return {}
 

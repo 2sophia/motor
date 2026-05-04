@@ -455,3 +455,67 @@ async def test_permissive_blocks_dotdot(cwd: str) -> None:
         None, None,
     )
     assert out.get("decision") == "block"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Modern PreToolUse shape — `hookSpecificOutput.permissionDecision`
+# ─────────────────────────────────────────────────────────────────────────
+
+async def test_deny_returns_modern_pretooluse_shape(cwd: str) -> None:
+    """Every block must include the modern hookSpecificOutput shape so
+    a future SDK that drops the legacy `decision: "block"` path keeps
+    working. Tested on a representative block path (Read outside cwd)."""
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {"tool_name": "Read", "tool_input": {"file_path": "/etc/passwd"}, "cwd": cwd},
+        None, None,
+    )
+    spec = out.get("hookSpecificOutput", {})
+    assert spec.get("hookEventName") == "PreToolUse"
+    assert spec.get("permissionDecision") == "deny"
+    assert "outside the workspace" in spec.get("permissionDecisionReason", "")
+
+
+async def test_deny_reason_matches_across_shapes(cwd: str) -> None:
+    """Legacy `reason` and modern `permissionDecisionReason` must carry
+    the same string — the model sees one of the two depending on which
+    path the CLI takes; they must not diverge."""
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {"tool_name": "Bash", "tool_input": {"command": "sudo rm -rf /"}, "cwd": cwd},
+        None, None,
+    )
+    legacy_reason = out.get("reason", "")
+    modern_reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert legacy_reason == modern_reason
+    assert legacy_reason  # non-empty
+
+
+async def test_allow_helper_returns_empty_dict() -> None:
+    """`Allow()` is the sugar for "let it through" — semantically `{}`."""
+    from sophia_motor import Allow
+    assert Allow() == {}
+
+
+async def test_deny_helper_returns_dual_shape() -> None:
+    """`Deny(reason)` builds the same dual shape used by the built-in guard."""
+    from sophia_motor import Deny
+    out = Deny("custom block reason")
+    assert out["decision"] == "block"
+    assert out["reason"] == "custom block reason"
+    spec = out["hookSpecificOutput"]
+    assert spec["hookEventName"] == "PreToolUse"
+    assert spec["permissionDecision"] == "deny"
+    assert spec["permissionDecisionReason"] == "custom block reason"
+
+
+async def test_allow_returns_no_block_marker(cwd: str) -> None:
+    """An allowed tool call must not carry any of the deny-shape fields."""
+    hook = make_guard_hook("strict")
+    out = await hook(
+        {"tool_name": "Read", "tool_input": {"file_path": "attachments/x.txt"}, "cwd": cwd},
+        None, None,
+    )
+    assert out == {}
+    assert "decision" not in out
+    assert "hookSpecificOutput" not in out
