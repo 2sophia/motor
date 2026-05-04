@@ -1,0 +1,14 @@
+{
+  "name": "sophia-motor",
+  "owner": {
+    "name": "Sophia AI",
+    "url": "https://2sophia.ai"
+  },
+  "plugins": [
+    {
+      "name": "sophia-motor",
+      "source": "./",
+      "description": "Claude Code skill for the sophia-motor Python library — teaches your local Claude how to build production agents with @tool decorator, MotorConfig, RunTask, subagents, in-process MCP, structured output, multi-turn chat."
+    }
+  ]
+}

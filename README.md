@@ -101,15 +101,14 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 
 ### Claude Code skill (optional)
 
-If you use [Claude Code](https://docs.claude.com/en/docs/claude-code/) as your dev environment, install the companion skill so your local Claude knows how to write `sophia-motor` code correctly:
+If you use [Claude Code](https://docs.claude.com/en/docs/claude-code/) as your dev environment, install the companion skill so your local Claude knows how to write `sophia-motor` code correctly. **Recommended path** — Claude Code marketplace, inside a session:
 
-```bash
-npm install -g @2sophia/sophia-motor-skill
-SKILL_DIR=$(npm root -g)/@2sophia/sophia-motor-skill
-mkdir -p ~/.claude/skills && ln -s "$SKILL_DIR" ~/.claude/skills/sophia-motor
+```
+/plugin marketplace add 2sophia/motor
+/plugin install sophia-motor
 ```
 
-The skill teaches conventions, golden rules, and decision trees. Source lives in [`skill/`](./skill/).
+Update later with `/plugin update`. The skill is also published on npm (`@2sophia/sophia-motor-skill`) for environments that prefer that flow — see [`skills/sophia-motor/README.md`](./skills/sophia-motor/README.md). Source lives in [`skills/sophia-motor/`](./skills/sophia-motor/).
 
 ---
 
