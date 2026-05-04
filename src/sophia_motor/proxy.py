@@ -100,11 +100,16 @@ class ProxyServer:
             fd=fd,
             log_level="warning",
             access_log=False,
-            lifespan="on",
+            # The proxy has no startup/shutdown handlers — the default
+            # starlette lifespan loop only adds a `await receive()` that
+            # never resolves cleanly when asyncio cancels at exit, which
+            # leaks a CancelledError traceback for every standalone-script
+            # example. Disable the lifespan protocol entirely.
+            lifespan="off",
         )
         self.server = uvicorn.Server(ucfg)
         self._task = asyncio.create_task(self.server.serve())
-        # poll for ready (server.started flips True after startup hooks run)
+        # poll for ready (server.started flips True once the socket is bound)
         for _ in range(100):
             if self.server.started:
                 break
@@ -244,8 +249,26 @@ class ProxyServer:
                     media_type="text/event-stream",
                 )
 
-            async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
-                upstream = await client.post(target, json=body, headers=headers)
+            try:
+                async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
+                    upstream = await client.post(target, json=body, headers=headers)
+            except httpx.RequestError as e:
+                # Network glitch (timeout, DNS fail, refused, reset). The
+                # SDK retries above us — we map to a clean 502 instead of
+                # leaking the httpx traceback through ASGI.
+                await self.events.log(
+                    "WARNING",
+                    f"upstream unreachable on request #{req_idx} "
+                    f"({type(e).__name__}: {e}); returning 502 — SDK will retry",
+                    run_id=run_id,
+                )
+                return JSONResponse(
+                    status_code=502,
+                    content={"error": {
+                        "type": "upstream_error",
+                        "message": f"{type(e).__name__}: {e}",
+                    }},
+                )
 
             response_bytes = upstream.content
             try:
@@ -297,12 +320,33 @@ class ProxyServer:
         chunks: list[bytes] = []
         usage_seen: dict = {}
         stop_reason: Optional[str] = None
-        async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
-            async with client.stream("POST", target, json=body, headers=headers) as upstream:
-                async for chunk in upstream.aiter_bytes():
-                    chunk = self.adapter.transform_sse_chunk(chunk)
-                    chunks.append(chunk)
-                    yield chunk
+        try:
+            async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
+                async with client.stream("POST", target, json=body, headers=headers) as upstream:
+                    async for chunk in upstream.aiter_bytes():
+                        chunk = self.adapter.transform_sse_chunk(chunk)
+                        chunks.append(chunk)
+                        yield chunk
+        except httpx.RequestError as e:
+            # Network glitch during stream open or mid-stream. We can't
+            # change the response status (already 200) — emit a synthetic
+            # SSE error event so the SDK sees a clean termination instead
+            # of an ASGI traceback. The SDK retries above us anyway.
+            await self.events.log(
+                "WARNING",
+                f"upstream stream interrupted on request #{req_idx} "
+                f"({type(e).__name__}: {e}); SDK will retry",
+                run_id=run_id,
+            )
+            err_payload = json.dumps({
+                "type": "error",
+                "error": {
+                    "type": "upstream_error",
+                    "message": f"{type(e).__name__}: {e}",
+                },
+            })
+            yield f"event: error\ndata: {err_payload}\n\n".encode()
+            return
         full_text = b"".join(chunks).decode(errors="replace")
         for line in full_text.splitlines():
             if not line.startswith("data: "):
