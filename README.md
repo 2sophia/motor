@@ -114,6 +114,8 @@ Single-shot scripts? Don't worry about it — the process death cleans up.
 | 🧵 **Multi-turn chat**              | `motor.chat()` → `chat.send()` with persistent SDK session. Build chat backends like sophia-agent's (1 motor, N concurrent users). |
 | 📐 **Pydantic-validated output**    | Pass any `BaseModel`. Get back a real instance, not a parsed dict.                                                |
 | 🧰 **Tool whitelisting**            | Hard-cap what the agent can see and do. No surprises.                                                             |
+| 🐍 **Python functions as tools**    | Decorate any function with `@tool`, pass it in `default_tools` / `RunTask.tools` / `AgentDefinition.tools`. Schema from Pydantic, audit dump per call. |
+| 🤖 **Subagents**                    | Declare specialist agents (declarative or explicit) — isolated contexts, parallel execution, summary-only return. |
 | 📚 **Skills as first-class**        | Drop a `SKILL.md` folder, the agent gets a new capability. Multi-source supported.                                |
 | 🪜 **Singleton pattern**            | Instance the motor once at module top-level. Call it from anywhere, any number of times. Zero lifecycle ceremony. |
 | 🧾 **Per-run audit trail**          | Every run lives in its own dir. Useful when "the model said X and we trusted it" needs to be defendable.          |
@@ -137,6 +139,7 @@ reasoning, no actions.
 | `WebSearch` | Live internet search                                        | available |
 | `WebFetch`  | Fetch a URL to text/markdown                                | available |
 | `Agent`     | Spawn an isolated subagent (see [Subagents](#subagents))    | available |
+| `@tool` fn  | Any Python function you decorate (see [Python tools](#python-tools)) — schema from Pydantic, mounted as in-process MCP | available |
 
 `WebSearch` and `WebFetch` reach the live internet — opt in only when
 the task genuinely needs fresh information. See
@@ -168,6 +171,7 @@ instance, different `RunTask`. Each row is a **runnable folder** in
 | [system-prompt](./examples/system-prompt) | Same prompt, three personas — `system` is the cheapest knob |
 | [vllm](./examples/vllm) | Self-hosted Qwen via vLLM — same motor, `VLLMAdapter` upstream |
 | [docker](./examples/docker) | Containerized run — explicit `workspace_root` + volume for persistence |
+| [python-tools](./examples/python-tools) | `@tool` decorator — Python functions exposed to the agent, with `ToolContext` + a subagent variant |
 | [subagents](./examples/subagents) | Spawn specialist subagents in isolated contexts (declarative + explicit) |
 
 The README from here on focuses on *concepts* — the why, the contract,
@@ -251,6 +255,91 @@ await motor.run(RunTask(
     tools=["Read", "Glob"],  # overrides default_tools
 ))
 ```
+
+---
+
+## Python tools
+
+Decorate a function with `@tool`. Pass it in `default_tools` next to
+the built-in tool names. The agent invokes it like anything else —
+schema, validation, audit dump are all derived from your Pydantic
+types. No naming gymnastics, no `mcp_servers={...}` wiring.
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/2sophia/motor/main/assets/python-tools.svg" alt="Python @tool functions become live MCP tools the agent can pick from" width="100%"/>
+</div>
+
+```python
+from pydantic import BaseModel, Field
+from sophia_motor import Motor, MotorConfig, RunTask, ToolContext, tool
+
+# Your domain — could be a DB, an internal service, a vector store.
+_CUSTOMERS = {
+    "ACME-001": {"name": "Acme Corp", "tier": "enterprise", "mrr": 24_500},
+    "BETA-002": {"name": "Beta GmbH", "tier": "startup",    "mrr":  1_200},
+}
+
+class CustomerLookup(BaseModel):
+    customer_id: str = Field(description="Internal ID, e.g. 'ACME-001'")
+
+class Customer(BaseModel):
+    name: str
+    tier: str
+    monthly_revenue_usd: float
+
+@tool
+async def fetch_customer(args: CustomerLookup) -> Customer:
+    """Look up a customer by internal ID. Returns tier and current MRR."""
+    row = _CUSTOMERS[args.customer_id]
+    return Customer(name=row["name"], tier=row["tier"], monthly_revenue_usd=row["mrr"])
+
+class BriefingInput(BaseModel):
+    customer_id: str
+    headline: str
+
+@tool
+async def save_briefing(args: BriefingInput, ctx: ToolContext) -> str:
+    """Persist a one-page account briefing under the run's outputs/ folder."""
+    path = ctx.outputs_dir / f"briefing_{args.customer_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# {args.headline}\n")
+    return str(path)
+
+motor = Motor(MotorConfig(default_tools=[fetch_customer, save_briefing]))
+
+await motor.run(RunTask(prompt=(
+    "Compare ACME-001 and BETA-002 on tier and MRR. "
+    "Then save a one-paragraph briefing for the bigger account."
+)))
+```
+
+What happens on that single `motor.run(...)`:
+- The model **picks** to call `fetch_customer` for both IDs (often in parallel, same turn), compares them, then calls `save_briefing` with the winner.
+- Schema for input + output is the **Pydantic model**. No `{"a": float}` dict-of-types boilerplate, no manual JSON Schema.
+- `ToolContext` is auto-injected when declared as a parameter — `ctx.outputs_dir`, `ctx.run_id`, `ctx.audit_dir` are pre-resolved to this run's paths.
+- Every call is dumped to `<run>/audit/tool_<name>_<seq>.json` with input, output, duration. The proxy traces stay alongside. BdI-defensible without extra work.
+
+**Same callable list works everywhere** — pick the place that fits:
+
+| Where | Effect |
+|---|---|
+| `MotorConfig(default_tools=[fetch_customer, save_briefing])` | applied to every run on this motor |
+| `RunTask(tools=[fetch_customer])` | overrides default for this run only |
+| `AgentDefinition(tools=[fetch_customer])` | restrict a subagent to a subset |
+
+The motor collects every callable referenced anywhere in the run,
+dedupes by name, mounts ONE in-process MCP server, and rewrites the
+tool lists for the SDK. Pass the function — that's the API.
+
+For sync functions (DB drivers without async, hashing, parsing) just
+write `def` instead of `async def`; the motor wraps them in
+`asyncio.to_thread` automatically. For overrides, `@tool(name=...,
+description=..., examples=[...])` — examples get appended to the
+description and lift hit rate on borderline calls.
+
+→ runnable end-to-end in [`examples/python-tools/`](./examples/python-tools/)
+(basic + a subagent variant that splits tools across parent and a
+specialist agent).
 
 ---
 
