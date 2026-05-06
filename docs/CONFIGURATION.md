@@ -111,6 +111,52 @@ All three are independent. Flip on what you need; the rest stays quiet.
 
 ---
 
+## Reasoning effort, thinking & cost killer
+
+Three SDK-native knobs are exposed at both the motor (defaults) and task (per-run override) level. All three default to `None` — the SDK / CLI uses its own default behaviour when nothing is set.
+
+```python
+# Set defaults on the motor instance — applied to every run unless the task overrides
+motor = Motor(MotorConfig(
+    default_effort="low",                            # fast, minimal reasoning
+    default_thinking={"type": "adaptive"},           # Claude decides depth (Opus 4.6+)
+    default_max_budget_usd=5.0,                      # cost killer for the run
+))
+
+# Override per-task — full replacement, never merge
+result = await motor.run(RunTask(
+    prompt="...",
+    effort="high",                                    # this run reasons deeper
+    max_budget_usd=20.0,                              # ...with a higher ceiling
+))
+```
+
+| Knob | Type | Where it goes | What it does |
+|---|---|---|---|
+| `effort` | `"low" \| "medium" \| "high" \| "max"` | `ClaudeAgentOptions.effort` (`--effort`) | Reasoning effort. Works alongside adaptive thinking to guide depth. Lower = faster, cheaper |
+| `thinking` | `{"type": "adaptive"} \| {"type": "enabled", "budget_tokens": N} \| {"type": "disabled"}` | `ClaudeAgentOptions.thinking` (`--thinking`) | Extended-thinking config. Optional `"display": "summarized" \| "omitted"` |
+| `max_budget_usd` | `float` | `ClaudeAgentOptions.max_budget_usd` (`--max-budget-usd`) | Cost killer — the run aborts with `error_max_budget_usd` once the threshold is exceeded |
+
+Subagents have their own per-`AgentDefinition.effort` knob (re-exported from the SDK). Set it on each `AgentDefinition` if you want different effort per role:
+
+```python
+from sophia_motor import AgentDefinition
+
+policy_analyst = AgentDefinition(
+    description="...", prompt="...",
+    tools=["Read", "Glob"],
+    effort="low",   # this subagent doesn't need deep reasoning
+)
+```
+
+**Caveats**:
+
+- **`max_budget_usd` cost estimation matches Anthropic's published pricing.** On non-Anthropic upstreams (vLLM, custom adapter) the figure may diverge from real spend — treat the killer as best-effort there.
+- **Adaptive thinking requires a model that supports it (Opus 4.6+).** On older models pass `{"type": "enabled", "budget_tokens": N}` instead, or leave it `None`.
+- **Resolution**: `task.X` wins over `MotorConfig.default_X`. Both `None` → SDK / CLI default. Same convention as every other `RunTask` field.
+
+---
+
 ## `MotorConfig`
 
 Settings on the motor instance — set once at construction.
@@ -146,6 +192,9 @@ Settings on the motor instance — set once at construction.
 | `default_disallowed_skills` | `list[str]`                         | `[]`                                    | Skills blocked by default                                                                |
 | `default_max_turns`         | `int`                               | `20`                                    | Default per-task turn cap                                                                |
 | `default_timeout_seconds`   | `int`                               | `300`                                   | Default per-task timeout                                                                 |
+| `default_max_budget_usd`    | `float?`                            | `None`                                  | Default cost killer in USD — the run aborts with `error_max_budget_usd` once the threshold is exceeded. Estimation matches Anthropic pricing; best-effort on non-Anthropic upstreams |
+| `default_thinking`          | `dict?`                             | `None`                                  | Default extended-thinking config: `{"type": "adaptive"}` (Opus 4.6+ default) / `{"type": "enabled", "budget_tokens": N}` / `{"type": "disabled"}`. Optional `"display"` key |
+| `default_effort`            | `"low" \| "medium" \| "high" \| "max" ?` | `None`                             | Default reasoning effort. Works with adaptive thinking. Subagents have their own `AgentDefinition.effort` |
 | `default_output_schema`     | `type[BaseModel]?`                  | `None`                                  | Default Pydantic class for structured output                                             |
 | `default_agents`            | `dict[str, AgentDefinition]`        | `{}`                                    | Default subagents (forwarded to `ClaudeAgentOptions.agents`); requires `"Agent"` in `tools` to actually take effect |
 
@@ -168,6 +217,9 @@ Settings on the single call — passed to `motor.run(RunTask(...))`. Anything le
 | `disallowed_skills` | `list[str]`             | Skill names to skip even if found in source                                                                                                                                                                                                    |
 | `agents`            | `dict[str, AgentDefinition]?` | Per-task subagent overrides. `None` falls back to `MotorConfig.default_agents`. `{}` explicitly disables. Requires `"Agent"` in `tools`.                                                                                              |
 | `custom_pre_tool_hooks` | `list[Any]?`        | Per-task PreToolUse hooks. `None` (default) falls back to `MotorConfig.custom_pre_tool_hooks`; a list **fully replaces** the config (NOT merge); `[]` explicitly drops the config defaults for this run. Built-in guardrail still runs. See [SECURITY.md](./SECURITY.md#custom-hooks) |
+| `max_budget_usd`    | `float?`                | Cost killer in USD for this run. `None` → fall back to `MotorConfig.default_max_budget_usd`. See "Reasoning effort, thinking & cost killer" above                                                                                              |
+| `thinking`          | `dict?`                 | Extended-thinking config for this run. `None` → fall back to `MotorConfig.default_thinking`. Same shape as the SDK's `ThinkingConfig`                                                                                                          |
+| `effort`            | `"low" \| "medium" \| "high" \| "max" ?` | Reasoning effort for this run. `None` → fall back to `MotorConfig.default_effort`. Subagent effort is set per `AgentDefinition.effort`                                                                                  |
 | `output_schema`     | `type[BaseModel]?`      | Pydantic class — agent commits to this shape, returned in `RunResult.output_data`                                                                                                                                                              |
 | `session_id`        | `str?`                  | Resume an existing SDK session (chat-style). Most callers use `Chat` instead.                                                                                                                                                                  |
 | `workspace_dir`     | `Path?`                 | Pre-existing chat workspace to reuse. Set by `Chat` for multi-turn dialogs.                                                                                                                                                                    |

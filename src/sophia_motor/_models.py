@@ -7,7 +7,7 @@ import mimetypes
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -161,6 +161,25 @@ class RunTask:
     # stricter secrets policy for user-facing chat vs the internal
     # admin pipeline) without spinning up a second Motor.
     custom_pre_tool_hooks: Optional[list[Any]] = None
+
+    # Cost killer in USD for this run. When set, the CLI aborts with
+    # `error_max_budget_usd` once the running spend exceeds the threshold.
+    # None falls back to MotorConfig.default_max_budget_usd; both None means
+    # no cap. Cost estimation matches Anthropic pricing; treat as best-effort
+    # on non-Anthropic upstreams (vLLM, custom adapters).
+    max_budget_usd: Optional[float] = None
+
+    # Extended-thinking config for this run, matching the SDK's ThinkingConfig
+    # TypedDict shape: {"type": "adaptive"}, {"type": "enabled",
+    # "budget_tokens": N}, or {"type": "disabled"} — with optional "display":
+    # "summarized" | "omitted". None falls back to MotorConfig.default_thinking.
+    thinking: Optional[dict] = None
+
+    # Reasoning effort for this run: "low" / "medium" / "high" / "max".
+    # Works with adaptive thinking to guide depth. None falls back to
+    # MotorConfig.default_effort. Subagent effort is set per
+    # AgentDefinition.effort (re-exported from the SDK).
+    effort: Optional[Literal["low", "medium", "high", "max"]] = None
 
 
 @dataclass

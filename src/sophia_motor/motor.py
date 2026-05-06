@@ -1094,6 +1094,19 @@ class Motor:
         if py_mcp_server is not None:
             sdk_kwargs["mcp_servers"] = {_PYTOOLS_SERVER: py_mcp_server}
 
+        # Reasoning controls — top-level SDK options, all optional. Each one
+        # falls back to the motor config default; if both task and config are
+        # None, the kwarg is not set and the SDK / CLI uses its own default.
+        # `effort` and `thinking` are independent of `max_budget_usd` (the cost
+        # killer); we forward each one as the SDK exposes it. Subagent effort
+        # is set per AgentDefinition.effort (re-exported from the SDK).
+        if eff := (task.effort or self.config.default_effort):
+            sdk_kwargs["effort"] = eff
+        if thk := (task.thinking or self.config.default_thinking):
+            sdk_kwargs["thinking"] = thk
+        if bud := (task.max_budget_usd or self.config.default_max_budget_usd):
+            sdk_kwargs["max_budget_usd"] = bud
+
         # Subagents — by-design opt-in. If the caller asked for subagents
         # via task.agents (or MotorConfig.default_agents), the `Agent` tool
         # must be reachable: present in `tools` (when an explicit whitelist

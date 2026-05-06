@@ -7,7 +7,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -477,6 +477,56 @@ class MotorConfig(BaseModel):
     )
     default_max_turns: int = 20
     default_timeout_seconds: int = 300
+    default_max_budget_usd: Optional[float] = Field(
+        default=None,
+        description=(
+            "Default cost killer in USD applied when RunTask.max_budget_usd "
+            "is None. The Claude CLI tracks the running cost of the query "
+            "and aborts with `error_max_budget_usd` once the threshold is "
+            "exceeded — useful as a safety net on long agent runs that "
+            "could otherwise burn through credits unbounded.\n\n"
+            "Forwarded to the SDK via `ClaudeAgentOptions.max_budget_usd` "
+            "(`--max-budget-usd` CLI flag). Default None = no budget cap. "
+            "Cost estimation matches Anthropic's published pricing; on non-"
+            "Anthropic upstreams (vLLM, custom adapter) the figure may "
+            "diverge from real spend — treat the killer as best-effort "
+            "there. Override per task with `RunTask.max_budget_usd`."
+        ),
+    )
+    default_thinking: Optional[dict] = Field(
+        default=None,
+        description=(
+            "Default extended-thinking config applied when RunTask.thinking "
+            "is None. Matches the SDK's `ThinkingConfig` TypedDict shape:\n"
+            "  - `{'type': 'adaptive'}` — Claude decides when/how much to "
+            "think (Opus 4.6+ default).\n"
+            "  - `{'type': 'enabled', 'budget_tokens': N}` — fixed budget "
+            "(older models).\n"
+            "  - `{'type': 'disabled'}` — no extended thinking.\n"
+            "Optional `'display': 'summarized' | 'omitted'` controls "
+            "whether thinking text is returned. Forwarded via "
+            "`ClaudeAgentOptions.thinking`. Default None = SDK / model "
+            "default. Adaptive thinking requires a model that supports "
+            "it (Opus 4.6+); on older models pass the `enabled` shape. "
+            "Override per task with `RunTask.thinking`."
+        ),
+    )
+    default_effort: Optional[Literal["low", "medium", "high", "max"]] = Field(
+        default=None,
+        description=(
+            "Default reasoning effort applied when RunTask.effort is None. "
+            "Works alongside adaptive thinking to guide depth:\n"
+            "  - 'low' — minimal thinking, fastest responses.\n"
+            "  - 'medium' — moderate thinking.\n"
+            "  - 'high' — deep reasoning (SDK default).\n"
+            "  - 'max' — maximum effort.\n"
+            "Forwarded to `ClaudeAgentOptions.effort`. Default None = SDK "
+            "default. Subagents have their own per-`AgentDefinition.effort` "
+            "knob (re-exported from the SDK) — set it on each AgentDefinition "
+            "if you want different effort per role. Override per task with "
+            "`RunTask.effort`."
+        ),
+    )
     default_disallowed_tools: list[str] = Field(
         default_factory=lambda: list(DEFAULT_DISALLOWED_TOOLS),
         description=(
